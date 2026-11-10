@@ -1,7 +1,10 @@
 """Web server that connects the engine to Instagram through Meta's official API.
 
 META_LOGIN picks the Meta setup:
-  facebook  (default) "API setup with Facebook login": the Muse Instagram is linked to a Facebook Page.
+  unified   (default) "API setup with Unified login". IG_ACCESS_TOKEN = the token Meta generates for the Muse
+            Instagram account, IG_ACCOUNT_ID = its Instagram account id. No Facebook Page needed. The bot tries
+            graph.facebook.com then graph.instagram.com and keeps whichever accepts the token.
+  facebook "API setup with Facebook login": the Muse Instagram is linked to a Facebook Page.
             IG_ACCESS_TOKEN = the Page access token, FB_PAGE_ID = the Page's id. Calls go to graph.facebook.com.
   instagram the older "API setup with Instagram login" (only on apps made before late 2026).
             IG_ACCESS_TOKEN = Instagram user token, IG_ACCOUNT_ID = Instagram account id. Calls go to
@@ -42,11 +45,22 @@ APP_SECRET = os.getenv("META_APP_SECRET", "")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 NOTIFY_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
-META_LOGIN = os.getenv("META_LOGIN", "facebook").strip().lower()
+META_LOGIN = os.getenv("META_LOGIN", "unified").strip().lower()
 FB_PAGE_ID = os.getenv("FB_PAGE_ID", "")
+_VER = os.getenv("GRAPH_VERSION", "v23.0")
 _HOST = "graph.instagram.com" if META_LOGIN == "instagram" else "graph.facebook.com"
-GRAPH = f"https://{_HOST}/{os.getenv('GRAPH_VERSION', 'v23.0')}"
-SEND_AS = IG_ACCOUNT_ID if META_LOGIN == "instagram" else (FB_PAGE_ID or "me")   # who the DM is sent from
+GRAPH = f"https://{_HOST}/{_VER}"
+SEND_AS = IG_ACCOUNT_ID if META_LOGIN in ("instagram", "unified") else (FB_PAGE_ID or "me")   # who the DM is sent from
+
+
+def graph_bases() -> list[str]:
+    """Where to call Meta. Unified login is new and Meta's docs differ on the host, so try both and keep
+    whichever answers (remembered in the settings table)."""
+    if META_LOGIN != "unified":
+        return [GRAPH]
+    bases = [f"https://graph.facebook.com/{_VER}", f"https://graph.instagram.com/{_VER}"]
+    good = engine.store.get_setting("graph_base")
+    return [good] + [b for b in bases if b != good] if good in bases else bases
 
 engine = Engine(load_config(os.getenv("MUSE_CONFIG", "config.yaml")), Store(os.getenv("MUSE_DB", "muse_leads.db")))
 
@@ -104,14 +118,15 @@ async def fetch_profile(ig_user_id: str) -> tuple[str | None, str | None]:
     c = engine.store.convo(ig_user_id)
     if c.get("username"):
         return c["username"], c.get("name")
-    try:
-        r = await http.get(f"{GRAPH}/{ig_user_id}", params={"fields": "username,name"},
-                           headers={"Authorization": f"Bearer {token()}"})
-        if r.status_code < 400:
-            j = r.json()
-            return j.get("username"), j.get("name")
-    except httpx.HTTPError as e:
-        log.error("profile lookup failed: %s", e)
+    for base in graph_bases():
+        try:
+            r = await http.get(f"{base}/{ig_user_id}", params={"fields": "username,name"},
+                               headers={"Authorization": f"Bearer {token()}"})
+            if r.status_code < 400:
+                j = r.json()
+                return j.get("username"), j.get("name")
+        except httpx.HTTPError as e:
+            log.error("profile lookup failed: %s", e)
     return None, None
 
 
@@ -120,11 +135,18 @@ async def send(ig_user_id: str, out: Out) -> None:
     if out.quick_replies:
         msg["quick_replies"] = [{"content_type": "text", "title": q[:20], "payload": q[:20]}
                                 for q in out.quick_replies[:13]]
-    r = await http.post(f"{GRAPH}/{SEND_AS}/messages",
-                        headers={"Authorization": f"Bearer {token()}"},
-                        json={"recipient": {"id": ig_user_id}, "message": msg})
-    if r.status_code >= 400:
-        log.error("send failed %s: %s", r.status_code, r.text)
+    r = None
+    for base in graph_bases():
+        r = await http.post(f"{base}/{SEND_AS}/messages",
+                            headers={"Authorization": f"Bearer {token()}"},
+                            json={"recipient": {"id": ig_user_id}, "message": msg})
+        if r.status_code < 400:
+            if META_LOGIN == "unified" and engine.store.get_setting("graph_base") != base:
+                engine.store.set_setting("graph_base", base)
+                log.info("Meta replies on %s, using it from now on", base)
+            break
+        log.error("send via %s failed %s: %s", base, r.status_code, r.text)
+    if r is None or r.status_code >= 400:
         return
     mid = r.json().get("message_id")
     if mid:
@@ -176,12 +198,16 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(default=""
         raise HTTPException(403, "bad signature")
     data = await request.json()
     for entry in data.get("entry", []):
-        for ev in entry.get("messaging", []):
+        events = list(entry.get("messaging", []))
+        # some Instagram setups deliver DMs as "changes" with field "messages" instead of "messaging"
+        events += [c.get("value") or {} for c in entry.get("changes", []) if c.get("field") == "messages"]
+        for ev in events:
             msg = ev.get("message") or {}
             text = msg.get("text")
             if not text or msg.get("is_deleted"):
                 continue  # stickers, reactions, story replies without text: leave for humans
-            ts = datetime.fromtimestamp(ev.get("timestamp", 0) / 1000, timezone.utc)
+            raw_ts = int(ev.get("timestamp") or 0)
+            ts = datetime.fromtimestamp(raw_ts / 1000 if raw_ts > 10**11 else raw_ts, timezone.utc)
             if msg.get("is_echo"):
                 guest = ev["recipient"]["id"]
                 if not is_bot_echo(guest, text, msg.get("mid")):
@@ -237,6 +263,21 @@ async def leads_csv(token: str = ""):
     return PlainTextResponse(buf.getvalue(), media_type="text/csv")
 
 
+@app.get("/check-meta")
+async def check_meta(token: str = ""):
+    """Open /check-meta?token=<ADMIN_TOKEN> after setup: shows whether Meta accepts the token on each host."""
+    check_admin(token)
+    out = {"meta_login": META_LOGIN, "account_id_set": bool(SEND_AS and SEND_AS != "me"), "hosts": {}}
+    for base in graph_bases():
+        try:
+            r = await http.get(f"{base}/{SEND_AS}", params={"fields": "id,username"},
+                               headers={"Authorization": f"Bearer {globals()['token']()}"})
+            out["hosts"][base] = r.json() if r.status_code < 400 else {"error": r.status_code, "detail": r.text[:300]}
+        except httpx.HTTPError as e:
+            out["hosts"][base] = {"error": str(e)}
+    return out
+
+
 @app.get("/report")
 async def report_view(token: str = ""):
     check_admin(token)
@@ -260,6 +301,7 @@ async def start_jobs():
                         log.exception("Muse OS read failed, using last known venues")
                 await refresh_token_if_due()
                 await notify(engine.weekly_ticket_check())
+                await notify(engine.nightly_digest())
                 for guest, out in engine.run_jobs():
                     await send(guest, out)
                 await sync_app()
