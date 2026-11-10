@@ -41,6 +41,8 @@ schedule:
 #   ok     = guys are fine, no ticket
 #   ratio  = guys OK if there are at least `min_girls_per_guy` girls for every guy, otherwise ask a human
 #   ask    = always hand the chat to a human when guys are in the group
+# guys_at_table: one = with 2 or more guys, the confirmation adds that guys can't be at the table
+#   (girls can bring them drinks); a single guy can sit with them. Leave it out where guys can sit at the table.
 #   no     = girls only (hands off so the team can offer another venue)
 # dress_code is one line, or one per day when it changes by night, e.g.
 #   dress_code:
@@ -57,6 +59,7 @@ venues:
     arrive_by: after 11 and before 12
     dress_code: Heels or leather boots are recommended (please try to avoid sneakers or Uggs)
     guys_policy: ticket
+    guys_at_table: one        # 2+ guys can't sit at the table (girls can bring them drinks); a single guy can
     pay_model: per_guest        # per_guest | per_guest_capped | flat   (for reporting)
   public_hotel:
     name: Public Hotel
@@ -72,6 +75,7 @@ venues:
     arrive_by: after 11 and before 12
     dress_code: Heels and dresses are recommended, no sneakers or Uggs
     guys_policy: ticket
+    guys_at_table: one        # 2+ guys can't sit at the table (girls can bring them drinks); a single guy can
   den_social:
     name: Den Social
     aliases: [den social, den]
@@ -155,6 +159,12 @@ messages:
   ask_guys: Any guys coming?
   ask_guys_count: How many guys?
   ask_age: Is everyone over 21? Only physical IDs are accepted
+  # a guest asks for a venue on a night we're not promoting there (all four lines join into one message)
+  venue_off_night: "We're not at {venue} {night} 😔"
+  venue_off_next: "We'll be there {venue_nights}!"
+  venue_off_alt: "{night} we have {options}."
+  venue_off_week: "This week we're at {options}."
+  venue_off_ask: Want to come one of those?
   no_venue_that_night: "We're not out {night}, but this week we're at {options}! Want to come one of those nights?"
   guys_check: Let me check with the door about the guys at {venue} and get right back to you 🙏
   age_check: Thanks for being honest! Let me check with the team and get back to you 💕
@@ -166,6 +176,8 @@ messages:
   # Used when the venue has a confirmation message on the Venues page in Muse OS; that text follows it.
   confirmation_intro: "You're all set for {venue} {night}! 💕"
   guys_ticket: "Guys just need a ticket: {ticket_link}"
+  # venues with guys_at_table: one, when 2 or more guys are coming
+  guys_no_table: "Heads up, the guys can't be at the table, but you can bring them drinks from it 💕"
   confirmation_late: >-
     You're all set for {venue} {night}! {dress_code}.
     Bring a physical ID and head over now, the door closes at {last_entry}. Text us when you're outside and {host} will walk you in 💕
