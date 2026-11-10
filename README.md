@@ -81,9 +81,10 @@ can be connected to the account at a time.
 ### Going live with this bot
 1. **Instagram**: switch @muse to a Professional (Business or Creator) account. In Settings → Messages, turn on
    *Allow access to messages* for connected tools.
-2. **Meta app**: on developers.facebook.com create an app → add the **Instagram** product → *API setup with
-   Instagram login*. Generate a token for the Muse account (`IG_ACCESS_TOKEN`) and note its Instagram account ID
-   (`IG_ACCOUNT_ID`) and the app secret (`META_APP_SECRET`).
+2. **Meta app**: on developers.facebook.com create an app (Use case: *Manage messaging & content on Instagram*) →
+   *API setup with Unified login*. Add the Muse Instagram account and generate its token (`IG_ACCESS_TOKEN`).
+   Copy the Instagram account ID shown next to it (`IG_ACCOUNT_ID`, a long number starting 178…) and, under
+   App settings > Basic, the app secret (`META_APP_SECRET`). No Facebook Page is needed.
 3. **Host the bot.** Easiest: put this folder in a GitHub repo, then on render.com choose New > Blueprint and
    pick the repo. `render.yaml` sets up the server and a small disk for the guest database (Render's Starter
    plan with a disk is about $7–8/month). Any host that runs Docker or Python with HTTPS also works:
@@ -94,7 +95,9 @@ can be connected to the account at a time.
    Set the environment variables: `IG_ACCESS_TOKEN`, `IG_ACCOUNT_ID`, `META_APP_SECRET`, `VERIFY_TOKEN` (any
    password you choose), `ADMIN_TOKEN` (another password, for the team links) and, optionally,
    `NOTIFY_WEBHOOK_URL` (a Slack or Discord channel webhook for team alerts).
-   The Instagram token lasts 60 days; the bot renews it every week by itself and alerts the team if renewal fails.
+   `META_LOGIN` is already set to `unified`. After it deploys, open `https://<your-host>/check-meta?token=<ADMIN_TOKEN>`:
+   it shows whether Meta accepts the token. The bot tries graph.facebook.com and graph.instagram.com and keeps
+   whichever works. (Older apps: `META_LOGIN=instagram` or `facebook` still work.)
 4. **Muse OS**: in Muse OS go to Admin > DM bot API > Create key, then set `MUSE_OS_URL` (the app's address)
    and `MUSE_OS_API_KEY` on the bot. Without them the bot still replies, but leads stay only in its own database.
 5. **Webhook**: in the Meta app, set the callback URL to `https://<your-host>/webhook` with your `VERIFY_TOKEN`
