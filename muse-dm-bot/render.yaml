@@ -1,0 +1,33 @@
+# One-click setup on Render (render.com > New > Blueprint > pick this repo).
+# The disk keeps the guest database and the auto-renewed Instagram token across restarts.
+services:
+  - type: web
+    name: muse-dm-bot
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: META_LOGIN
+        value: facebook
+      - key: FB_PAGE_ID
+        sync: false
+      - key: IG_ACCESS_TOKEN
+        sync: false
+      - key: IG_ACCOUNT_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: VERIFY_TOKEN
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: MUSE_OS_URL
+        sync: false
+      - key: MUSE_OS_API_KEY
+        sync: false
+      - key: NOTIFY_WEBHOOK_URL
+        sync: false
