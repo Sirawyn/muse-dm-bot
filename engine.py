@@ -1,0 +1,519 @@
+"""The conversation brain. No network code lives here, so it can be tested and simulated offline.
+
+Flow for each guest and night:
+  new DM -> qualify (night, venue, party size, guys) -> confirmation
+         -> "we're here" text (or host check-in) -> arrived
+         -> next afternoon: thank-you (arrived) or missed-you (no-show), only inside Instagram's 24h window
+Anything the bot shouldn't handle (tables, bottles, birthdays, pricing, guys at strict doors)
+goes to a human, and the bot goes quiet in any chat where a promoter has typed by hand.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import yaml
+
+from .parser import WEEKDAYS, find_scout, night_for, parse
+from .store import Store, iso
+
+
+class _Blank(dict):
+    def __missing__(self, key):
+        return ""
+
+
+@dataclass
+class Out:
+    text: str
+    quick_replies: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Result:
+    replies: list[Out] = field(default_factory=list)
+    notify: list[str] = field(default_factory=list)   # alerts for the team (hosts / admin)
+
+
+def load_config(path: str = "config.yaml") -> dict:
+    with open(path) as f:
+        return yaml.safe_load(f)
+
+
+class Engine:
+    def __init__(self, config: dict, store: Store):
+        self.cfg = config
+        self.store = store
+        self.tz = ZoneInfo(config["brand"].get("timezone", "America/New_York"))
+        self.venues = config["venues"]
+        self.msgs = config["messages"]
+        # Scouts earn per girl they refer: [{"name": "Mia Lee", "handle": "mia.lee"}]. Loaded from Muse OS
+        # (Team, role Scout), or listed in config under scouts:.
+        self.scouts: list[dict] = list(config.get("scouts") or [])
+        self.night_hosts: dict[str, dict[str, str]] = {}   # venue key -> {night: host on duty}
+        self.lineup: dict[str, set[str]] = {}               # venue key -> nights on the Muse OS lineup
+        self.lineup_dates: set[str] = set()
+
+    # helpers
+    def now(self) -> datetime:
+        return datetime.now(self.tz)
+
+    def _local(self, dt: datetime) -> datetime:
+        return dt.astimezone(self.tz) if dt.tzinfo else dt.replace(tzinfo=self.tz)
+
+    def venues_on(self, night: date) -> list[str]:
+        """The dated lineup from Muse OS wins for the nights it covers (the next 14); after that, or without
+        Muse OS, the weekly pattern."""
+        if self.lineup_dates and night.isoformat() <= max(self.lineup_dates):
+            return [k for k, nights in self.lineup.items() if night.isoformat() in nights]
+        return list(self.cfg.get("schedule", {}).get(WEEKDAYS[night.weekday()], []) or [])
+
+    def night_label(self, night: date, now: datetime) -> str:
+        base = night_for(now)
+        if night == base:
+            return "tonight"
+        if night == base + timedelta(days=1):
+            return "tomorrow"
+        return WEEKDAYS[night.weekday()].capitalize()
+
+    def upcoming_nights(self, now: datetime) -> list[tuple[date, list[str]]]:
+        base = night_for(now)
+        out = []
+        for i in range(7):
+            d = base + timedelta(days=i)
+            if self.venues_on(d):
+                out.append((d, self.venues_on(d)))
+        return out
+
+    def fmt(self, key: str, **kw) -> str:
+        return self.msgs[key].format_map(_Blank(kw)).strip()
+
+    @staticmethod
+    def join_names(names: list[str]) -> str:
+        if len(names) <= 1:
+            return "".join(names)
+        return ", ".join(names[:-1]) + " or " + names[-1]
+
+    def _week_options(self, now: datetime, limit: int = 4) -> str:
+        parts = []
+        for d, keys in self.upcoming_nights(now)[:limit]:
+            parts.append(f"{self.night_label(d, now)} ({' & '.join(self.venues[k]['name'] for k in keys)})")
+        return self.join_names(parts) if parts else "a few spots soon"
+
+    def _lead_is_live(self, lead: dict | None, now: datetime) -> bool:
+        if not lead or lead["status"] in ("no_show", "cancelled", "dropped"):
+            return False
+        if lead["night"] and date.fromisoformat(lead["night"]) < night_for(now):
+            return False
+        return True
+
+    # inbound DM
+    def handle_message(self, ig_user_id: str, text: str, msg_time: datetime | None = None,
+                       username: str | None = None, now: datetime | None = None,
+                       name: str | None = None) -> Result:
+        now = self._local(now or self.now())
+        msg_time = self._local(msg_time or now)
+        res = Result()
+        c = self.store.convo(ig_user_id)
+        c["username"] = username or c.get("username")
+        c["name"] = name or c.get("name")
+        c["last_user_msg_at"] = iso(msg_time)
+        self.store.log(msg_time, ig_user_id, "in", text)
+        who = f"@{c['username']}" if c.get("username") else ig_user_id
+
+        lead = self.store.lead(c["lead_id"]) if c.get("lead_id") else None
+        p = parse(text, now, self.venues, c.get("expecting"))
+
+        # A new night mentioned after a finished/confirmed one starts a fresh request.
+        if lead and lead["status"] in ("confirmed", "arrived") and p.night \
+                and lead["night"] and p.night.isoformat() != lead["night"]:
+            lead = None
+        if not self._lead_is_live(lead, now):
+            if p.pleasantry:
+                self.store.save_convo(c)
+                return res   # "ty!!", "sounds good" after a night or a decline: nothing to answer
+            lead = self.store.lead(self.store.new_lead(ig_user_id, c.get("username"), msg_time))
+            c.update(stage="qualifying", expecting=None, lead_id=lead["id"], draft={})
+
+        paused = c.get("paused_until") and datetime.fromisoformat(c["paused_until"]) > now
+        if paused:
+            self.store.save_convo(c)
+            return res  # a promoter is handling this chat by hand
+
+        self.store.dirty.add(lead["id"])   # "last message at" changed
+        scout_note = None
+        if self.scouts and not lead.get("referred_by"):
+            scout = find_scout(text, self.scouts)
+            if scout:
+                self.store.update_lead(lead["id"], referred_by=scout)
+                lead["referred_by"] = scout
+                scout_note = f"🤝 {who} was referred by scout {scout}"
+        status = lead["status"]
+        if status in ("confirmed", "arrived"):
+            res = self._after_confirm(c, lead, p, text, now, who)
+        elif status == "needs_human":
+            res.notify.append(f"💬 {who} wrote again while waiting on the team: \"{text}\"")
+        else:
+            res = self._qualify(c, lead, p, now, who)
+
+        if scout_note:
+            res.notify.append(scout_note)
+        if res.replies and not lead.get("first_reply_at"):
+            self._mark_first_reply(lead, now)
+        for r in res.replies:
+            self.store.log(now, ig_user_id, "out", r.text)
+        self.store.save_convo(c)
+        return res
+
+    def _mark_first_reply(self, lead: dict, now: datetime) -> None:
+        first = datetime.fromisoformat(lead["first_msg_at"])
+        self.store.update_lead(lead["id"], first_reply_at=iso(now),
+                               response_seconds=max(0.0, (now - first).total_seconds()))
+
+    def _qualify(self, c: dict, lead: dict, p, now: datetime, who: str) -> Result:
+        res = Result()
+        d = c["draft"]
+        first_touch = not lead.get("first_reply_at")
+        if p.night:
+            d["night"] = p.night.isoformat()
+        if p.venue:
+            d["venue"] = p.venue
+        if p.party_size:
+            d["party_size"] = p.party_size
+        if p.guys is not None:
+            d["guys"] = p.guys
+            d.pop("guys_unknown", None)
+        elif p.guys_yes_no_count:
+            d["guys_unknown"] = True
+        over21 = p.over21
+        if over21 is None and d.get("guys") is not None and "over21" not in d and c.get("expecting") in (
+                "age", "guys", "guys_count", "party_size") and re.match(r"^\W*(yes+|yeah|yea|yep|yup|ya+)\b", p.text):
+            over21 = True   # a plain "yes" to the over-21 question asked alongside the others
+        if over21 is not None:
+            d["over21"] = over21
+
+        if p.wants_human:
+            self._to_human(c, lead, d, "handoff", res, who, reason="birthday, bottles, discount, complaint or job")
+            return res
+        if p.declined and not (p.party_size or p.venue):
+            res.replies.append(Out(self.msgs["decline"]))
+            self.store.update_lead(lead["id"], status="cancelled", notes="said not this time")
+            c.update(stage="done", expecting=None)
+            return res
+        if d.get("over21") is False:
+            self._to_human(c, lead, d, "age_check", res, who, reason="someone under 21 or without a physical ID")
+            return res
+        faq_lines = self.faq_answers(p, d)
+
+        night = date.fromisoformat(d["night"]) if d.get("night") else None
+        questions: list[str] = []
+        quick: list[str] = []
+        expecting = None
+
+        if night and not d.get("venue"):
+            options = self.venues_on(night)
+            if not options:
+                questions.append(self.fmt("no_venue_that_night", night=self.night_label(night, now),
+                                          options=self._week_options(now)))
+                quick = [self.night_label(n, now).capitalize() for n, _ in self.upcoming_nights(now)][:3]
+                d.pop("night")
+                expecting = "night"
+            elif len(options) == 1:
+                d["venue"] = options[0]   # only one spot that night, no need to ask
+            else:
+                names = [self.venues[k]["name"] for k in options]
+                questions.append(self.fmt("ask_venue", night=self.night_label(night, now),
+                                          options=self.join_names(names)))
+                quick = names
+                expecting = "venue"
+        if not d.get("night") and not questions:
+            questions.append(self.msgs["ask_night"])
+            quick = [self.night_label(n, now).capitalize() for n, _ in self.upcoming_nights(now)][:3]
+            expecting = "night"
+        if not d.get("party_size"):
+            questions.append(self.msgs["ask_party_size"])
+            expecting = expecting or "party_size"
+        if d.get("guys_unknown"):
+            questions.append(self.msgs["ask_guys_count"])
+            expecting = expecting or "guys_count"
+        elif d.get("guys") is None:
+            questions.append(self.msgs["ask_guys"])
+            if not quick:
+                quick = ["No guys, just girls", "Yes, some guys"]
+            expecting = expecting or "guys"
+        if "over21" not in d:
+            questions.append(self.msgs["ask_age"])
+            expecting = expecting or "age"
+
+        self.store.update_lead(lead["id"], night=d.get("night"), venue=d.get("venue"),
+                               party_size=d.get("party_size"), guys=d.get("guys"))
+        if questions:
+            # Ask every missing thing at once, so it takes as few messages as possible.
+            text = "\n".join(q[:1].upper() + q[1:] for q in faq_lines + questions)
+            if first_touch:
+                returning = len(self.store.leads("ig_user_id=?", (lead["ig_user_id"],))) > 1
+                hello = self.msgs.get("greeting_returning") if returning else None
+                text = (hello or self.msgs["greeting"]).strip() + "\n" + text
+            res.replies.append(Out(text, quick if len(quick) <= 13 else []))
+            c["expecting"] = expecting
+            return res
+
+        # Everything collected: check the door policy for guys.
+        v = self.venues[d["venue"]]
+        guys, party = d["guys"], d["party_size"]
+        if guys >= party:
+            self._to_human(c, lead, d, "handoff", res, who,
+                           reason=f"group of {party} with {guys} guys, numbers need a human look")
+            return res
+        girls = party - guys
+        scheduled = self.venues_on(night)
+        if scheduled and d["venue"] not in scheduled:
+            self._to_human(c, lead, d, "handoff", res, who,
+                           reason=f"asked for {v['name']} on a night it's not on the schedule")
+            return res
+        policy = v.get("guys_policy", "ok")
+        if guys and (policy in ("ask", "no") or
+                     (policy == "ratio" and girls < guys * v.get("min_girls_per_guy", 2))):
+            self._to_human(c, lead, d, "guys_check", res, who,
+                           reason=f"{guys} guy(s) in a group of {party} for {v['name']}")
+            return res
+        self._confirm(c, lead, d, now, res, who, faq_lines)
+        return res
+
+    def faq_answers(self, p, d: dict | None = None) -> list[str]:
+        faq = self.cfg.get("faq", {})
+        v = self.venues.get((d or {}).get("venue") or "", {})
+        link = self.ticket_link(v) or ""
+        out = []
+        for key in p.faq:
+            if key in faq:
+                out.append(faq[key].format(ticket_link=link or "we'll send you the link",
+                                           arrive_by=v.get("arrive_by", "before 12")).strip())
+        return out
+
+    def _confirm(self, c, lead, d, now, res: Result, who: str, faq_lines: list[str] | None = None) -> None:
+        night = date.fromisoformat(d["night"])
+        v = {**self.venues[d["venue"]], "host": self.host_for(d["venue"], night)}
+        kw = dict(venue=v["name"], night=self.night_label(night, now), party_size=d["party_size"],
+                  dress_code=v["dress_code"].rstrip("."), arrive_by=v["arrive_by"], host=v["host"])
+        if v.get("confirmation_text"):   # edited on the Venues page in Muse OS
+            text = self.fmt("confirmation_intro", **kw) + "\n\n" + v["confirmation_text"].replace("[HOST]", v["host"])
+        else:
+            text = self.fmt("confirmation", **kw)
+        if d.get("guys") and v.get("guys_policy", "ticket") == "ticket":
+            link = self.ticket_link(v)
+            text += "\n" + self.fmt("guys_ticket", ticket_link=link or "we'll send you the link")
+            if not link:
+                res.notify.append(f"🎟️ Send {who} the guys' ticket link for {v['name']}")
+        faq_lines = [f for f in (faq_lines or []) if "ticket" not in f.lower() or not d.get("guys")]
+        if faq_lines:
+            text = "\n".join(faq_lines) + "\n\n" + text
+        res.replies.append(Out(text))
+        self.store.update_lead(lead["id"], status="confirmed", confirmed_at=iso(now),
+                               party_size=d["party_size"], guys=d.get("guys"))
+        c.update(stage="confirmed", expecting=None)
+        res.notify.append(f"✅ Confirmed {who}: {d['party_size']} ({d.get('guys') or 0} guys) for "
+                          f"{v['name']} {WEEKDAYS[night.weekday()].capitalize()} {night}. Host: {v['host']}")
+
+    def _to_human(self, c, lead, d, msg_key, res: Result, who: str, reason: str) -> None:
+        v = self.venues.get(d.get("venue") or "", {})
+        res.replies.append(Out(self.fmt(msg_key, venue=v.get("name", "the venue"))))
+        self.store.update_lead(lead["id"], status="needs_human", notes=reason, night=d.get("night"),
+                               venue=d.get("venue"), party_size=d.get("party_size"), guys=d.get("guys"))
+        c.update(stage="needs_human", expecting=None)
+        res.notify.append(f"🙋 Needs a human: {who} ({reason}). Reply to them in the Instagram app.")
+
+    def _after_confirm(self, c, lead, p, text, now, who) -> Result:
+        res = Result()
+        night = date.fromisoformat(lead["night"])
+        v = {**self.venues[lead["venue"]], "host": self.host_for(lead["venue"], night)}
+        if p.arrived and not p.is_question and (lead["status"] == "confirmed" or not p.on_the_way):
+            if lead["status"] == "confirmed":
+                self.store.update_lead(lead["id"], status="arrived", arrived_at=iso(now),
+                                       arrived_count=lead["party_size"])
+            key = "otw_ack" if p.on_the_way else "arrival_ack"
+            res.replies.append(Out(self.fmt(key, host=v["host"])))
+            verb = "is on the way to" if p.on_the_way else "is at"
+            res.notify.append(f"🚪 {who} {verb} {v['name']} ({lead['party_size']} people). "
+                              f"{v['host']}, get ready to walk them in!")
+        elif p.over21 is False:
+            self.store.update_lead(lead["id"], notes="age/ID issue after confirming")
+            res.replies.append(Out(self.fmt("age_check")))
+            res.notify.append(f"🪪 {who} (confirmed for {v['name']}) has an age/ID issue: \"{text}\"")
+        elif p.declined:
+            self.store.update_lead(lead["id"], status="cancelled", notes="cancelled by guest")
+            res.replies.append(Out(self.msgs["decline"]))
+            res.notify.append(f"❌ {who} cancelled for {v['name']} {night}")
+        elif p.faq and not p.wants_human:
+            res.replies.append(Out("\n".join(self.faq_answers(p, {"venue": lead["venue"]}))))
+        elif p.wants_human or p.is_question:
+            res.replies.append(Out(self.fmt("handoff")))
+            res.notify.append(f"❓ {who} (confirmed for {v['name']}) asked: \"{text}\"")
+        elif lead["status"] == "confirmed" and (p.venue or p.party_size or p.night):
+            res.replies.append(Out(self.fmt("already_confirmed", venue=v["name"],
+                                            night=self.night_label(night, now), host=v["host"])))
+        # Anything else ("thank you!!", emojis) gets no auto-reply so the bot doesn't over-talk.
+        return res
+
+    # human promoter typed in the Instagram app
+    def handle_human_reply(self, ig_user_id: str, text: str, now: datetime | None = None) -> None:
+        now = self._local(now or self.now())
+        c = self.store.convo(ig_user_id)
+        hours = self.cfg["brand"].get("human_takeover_hours", 12)
+        c["paused_until"] = iso(now + timedelta(hours=hours))
+        self.store.log(now, ig_user_id, "human", text)
+        lead = self.store.lead(c["lead_id"]) if c.get("lead_id") else None
+        if lead and not lead.get("first_reply_at"):
+            self._mark_first_reply(lead, now)
+        self.store.save_convo(c)
+
+    def apply_venue_confirmations(self, by_name: dict[str, str]) -> None:
+        for v in self.venues.values():
+            text = by_name.get(v["name"].lower())
+            if text:
+                v["confirmation_text"] = text
+
+    def host_for(self, venue_key: str, night: date) -> str:
+        """Host on duty from the Muse OS lineup (Nights tab), else the venue's config host."""
+        return self.night_hosts.get(venue_key, {}).get(night.isoformat()) or self.venues[venue_key]["host"]
+
+    def apply_night_hosts(self, by_name: dict[str, dict[str, str | None]]) -> None:
+        """{venue name lowercase: {"2026-11-13": "Mia" or None}} from GET /api/v1/venues upcoming[]."""
+        keys = {v["name"].lower(): k for k, v in self.venues.items()}
+        self.night_hosts = {keys[n]: {d: h for d, h in nights.items() if h} for n, nights in by_name.items() if n in keys}
+        # the dated lineup itself: which venue runs which night, host or not
+        self.lineup = {keys[n]: set(nights) for n, nights in by_name.items() if n in keys}
+        self.lineup_dates = {d for nights in self.lineup.values() for d in nights}
+
+    def apply_scouts(self, scouts: list[dict]) -> None:
+        if scouts:
+            self.scouts = scouts
+
+    def ticket_link(self, v: dict) -> str:
+        """Muse OS link (updated weekly) wins, then the venue's config link, then the brand-wide one."""
+        return v.get("ticket_link_app") or v.get("ticket_link") or self.cfg["brand"].get("ticket_link") or ""
+
+    def apply_venue_ticket_links(self, by_name: dict[str, str]) -> None:
+        for v in self.venues.values():
+            if v["name"].lower() in by_name:
+                v["ticket_link_app"] = by_name[v["name"].lower()]
+
+    def weekly_ticket_check(self, now: datetime | None = None) -> list[str]:
+        """Once a week (Monday after `ticket_check_hour`), alert the team about venues running this week
+        that still have no guys' ticket link."""
+        now = self._local(now or self.now())
+        hour = self.cfg["brand"].get("ticket_check_hour", 12)
+        if now.weekday() != 0 or now.hour < hour:
+            return []
+        marker = f"ticket_check {now.date().isoformat()}"
+        if self.store.db.execute("SELECT 1 FROM events WHERE direction='system' AND text=?", (marker,)).fetchone():
+            return []
+        self.store.log(now, None, "system", marker)
+        missing = []
+        for _, keys in self.upcoming_nights(now):
+            for k in keys:
+                name = self.venues[k]["name"]
+                if not self.ticket_link(self.venues[k]) and name not in missing:
+                    missing.append(name)
+        if not missing:
+            return []
+        return [f"🎟️ No guys' ticket link yet this week for {', '.join(missing)}. "
+                f"Add them on the Venues page in Muse OS."]
+
+    def apply_venue_schedule(self, nights_by_name: dict[str, list[str]]) -> None:
+        """Muse OS venue nights are the source of truth once any venue has nights filled in."""
+        if not any(nights_by_name.values()):
+            return
+        by_name = {v["name"].lower(): k for k, v in self.venues.items()}
+        sched = {d: [] for d in WEEKDAYS}
+        for name, nights in nights_by_name.items():
+            key = by_name.get(name)
+            for n in nights:
+                if key and n in sched:
+                    sched[n].append(key)
+        self.cfg["schedule"] = sched
+
+    def resume_bot(self, ig_user_id: str) -> None:
+        c = self.store.convo(ig_user_id)
+        c["paused_until"] = None
+        self.store.save_convo(c)
+
+    # host tools
+    def check_in(self, lead_id: int, count: int | None = None, now: datetime | None = None) -> None:
+        now = self._local(now or self.now())
+        lead = self.store.lead(lead_id)
+        self.store.update_lead(lead_id, status="arrived", arrived_at=lead.get("arrived_at") or iso(now),
+                               arrived_count=count if count is not None else lead["party_size"])
+
+    def apply_checkins(self, entries: list[dict], now: datetime | None = None) -> int:
+        """Door check-ins from the Muse OS app: [{lead_id: "DM-00007", status: "Arrived"|"No-show"|"Confirmed",
+        girls_arrived}]. Safe to apply the same entry twice. Returns how many leads changed."""
+        now = self._local(now or self.now())
+        changed = 0
+        for e in entries:
+            m = re.fullmatch(r"DM-(\d+)", str(e.get("lead_id") or ""))
+            lead = self.store.lead(int(m.group(1))) if m else None
+            if not lead or lead["status"] in ("cancelled", "dropped"):
+                continue
+            st, girls = e.get("status"), e.get("girls_arrived")
+            if st == "Arrived":
+                want = dict(status="arrived", girls_arrived=girls,
+                            arrived_count=(girls + (lead.get("guys") or 0)) if girls is not None else lead["party_size"])
+                if not lead.get("arrived_at"):
+                    want["arrived_at"] = iso(now)
+            elif st == "No-show":
+                want = dict(status="no_show", girls_arrived=0, arrived_count=0, arrived_at=None)
+            elif st == "Confirmed":   # host undid a check-in
+                want = dict(status="confirmed", girls_arrived=None, arrived_count=None, arrived_at=None)
+            else:
+                continue
+            if any(lead.get(k) != v for k, v in want.items() if k != "arrived_at"):
+                self.store.update_lead(lead["id"], **want)
+                changed += 1
+        return changed
+
+    def confirm_manually(self, lead_id: int, now: datetime | None = None) -> Result:
+        """After a human OKs a handed-off request (e.g. guys cleared with the door), send the confirmation."""
+        now = self._local(now or self.now())
+        lead = self.store.lead(lead_id)
+        c = self.store.convo(lead["ig_user_id"])
+        d = {"night": lead["night"], "venue": lead["venue"], "party_size": lead["party_size"], "guys": lead["guys"]}
+        res = Result()
+        who = f"@{lead['username']}" if lead.get("username") else lead["ig_user_id"]
+        self._confirm(c, lead, d, now, res, who)
+        c["paused_until"] = None
+        self.store.save_convo(c)
+        return res
+
+    # scheduled jobs (run every few minutes)
+    def run_jobs(self, now: datetime | None = None) -> list[tuple[str, Out]]:
+        now = self._local(now or self.now())
+        b = self.cfg["brand"]
+        to_send: list[tuple[str, Out]] = []
+        for lead in self.store.leads("status IN ('confirmed','qualifying','needs_human') AND night IS NOT NULL"):
+            night = date.fromisoformat(lead["night"])
+            cutoff = datetime.combine(night + timedelta(days=1), datetime.min.time(), self.tz) \
+                + timedelta(hours=b.get("night_cutoff_hour", 5))
+            if now >= cutoff:
+                new = "no_show" if lead["status"] == "confirmed" else "dropped"
+                self.store.update_lead(lead["id"], status=new)
+        for lead in self.store.leads("status IN ('arrived','no_show') AND followup_sent IS NULL"):
+            night = date.fromisoformat(lead["night"])
+            due = datetime.combine(night + timedelta(days=1), datetime.min.time(), self.tz) \
+                + timedelta(hours=b.get("followup_hour", 13))
+            if now < due:
+                continue
+            c = self.store.convo(lead["ig_user_id"])
+            last = datetime.fromisoformat(c["last_user_msg_at"]) if c.get("last_user_msg_at") else None
+            # Instagram only allows automated messages within 24h of the guest's last message.
+            if not last or now - last > timedelta(hours=23, minutes=30):
+                self.store.update_lead(lead["id"], followup_sent="skipped_outside_24h", followup_at=iso(now))
+                continue
+            key = "thank_you" if lead["status"] == "arrived" else "missed_you"
+            out = Out(self.fmt(key, next_options=self._week_options(now, limit=3)))
+            to_send.append((lead["ig_user_id"], out))
+            self.store.update_lead(lead["id"], followup_sent=key, followup_at=iso(now))
+            self.store.log(now, lead["ig_user_id"], "out", out.text)
+        return to_send
