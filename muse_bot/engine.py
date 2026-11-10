@@ -213,7 +213,31 @@ class Engine:
         quick: list[str] = []
         expecting = None
 
-        if night and not d.get("venue"):
+        if night and d.get("venue") and d["venue"] not in self.venues_on(night):
+            # she named a venue we're not promoting that night: say so, offer its nights and that night's spots
+            vname = self.venues[d["venue"]]["name"]
+            label = self.night_label(night, now)
+            its = [n for n, keys in self.upcoming_nights(now) if d["venue"] in keys and n != night][:3]
+            others = self.venues_on(night)
+            parts = [self.fmt("venue_off_night", venue=vname, night=label)]
+            if its:
+                parts.append(self.fmt("venue_off_next", venue=vname,
+                                      venue_nights=self.join_names([self.night_label(n, now) for n in its])))
+            if others:
+                parts.append(self.fmt("venue_off_alt", night=label.capitalize() if label != "tonight" else "Tonight",
+                                      options=self.join_names([self.venues[k]["name"] for k in others])))
+            if not its and not others:
+                parts.append(self.fmt("venue_off_week", options=self._week_options(now)))
+            parts.append(self.msgs["venue_off_ask"])
+            questions.append(" ".join(p for p in parts if p))
+            quick = [self.night_label(n, now).capitalize() for n in its] + [self.venues[k]["name"] for k in others]
+            if others:
+                d.pop("venue")          # "friday" keeps asking venue for Friday; "noflex" keeps tonight
+                expecting = "venue"
+            else:
+                d.pop("night")          # "friday" means this venue on Friday
+                expecting = "night"
+        elif night and not d.get("venue"):
             options = self.venues_on(night)
             if not options:
                 questions.append(self.fmt("no_venue_that_night", night=self.night_label(night, now),
@@ -324,6 +348,8 @@ class Engine:
             text += "\n" + self.fmt("guys_ticket", ticket_link=link or "we'll send you the link")
             if not link:
                 res.notify.append(f"🎟️ Send {who} the guys' ticket link for {v['name']}")
+        if (d.get("guys") or 0) >= 2 and str(v.get("guys_at_table", "")).lower() == "one":
+            text += "\n" + self.fmt("guys_no_table")
         faq_lines = [f for f in (faq_lines or []) if "ticket" not in f.lower() or not d.get("guys")]
         if faq_lines:
             text = "\n".join(faq_lines) + "\n\n" + text
