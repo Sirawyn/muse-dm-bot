@@ -54,6 +54,7 @@ class Engine:
         self.scouts: list[dict] = list(config.get("scouts") or [])
         self.night_hosts: dict[str, dict[str, str]] = {}   # venue key -> {night: host on duty}
         self.lineup: dict[str, set[str]] = {}               # venue key -> nights on the Muse OS lineup
+        self.night_dress: dict[str, dict[str, str]] = {}    # venue key -> {night: dress code} from Muse OS
         self.lineup_dates: set[str] = set()
 
     # helpers
@@ -279,8 +280,21 @@ class Engine:
             self._to_human(c, lead, d, "guys_check", res, who,
                            reason=f"{guys} guy(s) in a group of {party} for {v['name']}")
             return res
+        if now >= self.night_time(night, self.last_entry(v)):
+            self._to_human(c, lead, d, "late_check", res, who,
+                           reason=f"asked after last entry ({self.last_entry(v)}) for {v['name']}, check the door")
+            return res
         self._confirm(c, lead, d, now, res, who, faq_lines)
         return res
+
+    def night_time(self, night: date, hhmm: str) -> datetime:
+        """A clock time on a night out: anything before noon belongs to the early hours after it."""
+        h, m = (int(x) for x in hhmm.split(":"))
+        day = night + timedelta(days=1) if h < 12 else night
+        return datetime.combine(day, datetime.min.time(), self.tz) + timedelta(hours=h, minutes=m)
+
+    def last_entry(self, v: dict) -> str:
+        return str(v.get("last_entry") or self.cfg["brand"].get("last_entry", "00:30"))
 
     def faq_answers(self, p, d: dict | None = None) -> list[str]:
         faq = self.cfg.get("faq", {})
@@ -297,9 +311,12 @@ class Engine:
         night = date.fromisoformat(d["night"])
         v = {**self.venues[d["venue"]], "host": self.host_for(d["venue"], night)}
         kw = dict(venue=v["name"], night=self.night_label(night, now), party_size=d["party_size"],
-                  dress_code=v["dress_code"].rstrip("."), arrive_by=v["arrive_by"], host=v["host"])
-        if v.get("confirmation_text"):   # edited on the Venues page in Muse OS
-            text = self.fmt("confirmation_intro", **kw) + "\n\n" + v["confirmation_text"].replace("[HOST]", v["host"])
+                  dress_code=self.dress_code_for(d["venue"], night), arrive_by=v["arrive_by"], host=v["host"])
+        late = now >= self.night_time(night, str(self.cfg["brand"].get("late_after", "23:30")))
+        if late:   # it's already going: tell them to head over now, not "get there after 11"
+            text = self.fmt("confirmation_late", last_entry=self._clock(self.last_entry(v)), **kw)
+        elif v.get("confirmation_text"):   # edited on the Venues page in Muse OS
+            text = self.fmt("confirmation_intro", **kw) + "\n\n" + v["confirmation_text"].replace("[HOST]", v["host"]).replace("[DRESS_CODE]", kw["dress_code"])
         else:
             text = self.fmt("confirmation", **kw)
         if d.get("guys") and v.get("guys_policy", "ticket") == "ticket":
@@ -314,8 +331,35 @@ class Engine:
         self.store.update_lead(lead["id"], status="confirmed", confirmed_at=iso(now),
                                party_size=d["party_size"], guys=d.get("guys"))
         c.update(stage="confirmed", expecting=None)
-        res.notify.append(f"✅ Confirmed {who}: {d['party_size']} ({d.get('guys') or 0} guys) for "
+        res.notify.append(f"{'⏰ Late add, on the way now' if late else '✅ Confirmed'} {who}: "
+                          f"{d['party_size']} ({d.get('guys') or 0} guys) for "
                           f"{v['name']} {WEEKDAYS[night.weekday()].capitalize()} {night}. Host: {v['host']}")
+
+    @staticmethod
+    def _clock(hhmm: str) -> str:
+        h, m = (int(x) for x in hhmm.split(":"))
+        return f"{(h % 12) or 12}{':%02d' % m if m else ''}{'am' if h < 12 else 'pm'}"
+
+    def nightly_digest(self, now: datetime | None = None) -> list[str]:
+        """Once a night at digest_time: each venue's list for tonight, under that night's host."""
+        now = self._local(now or self.now())
+        night = night_for(now)
+        if now < self.night_time(night, str(self.cfg["brand"].get("digest_time", "21:00"))) or now.hour < 12:
+            return []
+        marker = f"digest {night.isoformat()}"
+        if self.store.db.execute("SELECT 1 FROM events WHERE direction='system' AND text=?", (marker,)).fetchone():
+            return []
+        self.store.log(now, None, "system", marker)
+        out = []
+        leads = self.store.leads("night=? AND status IN ('confirmed','arrived')", (night.isoformat(),))
+        for key in sorted({l["venue"] for l in leads if l["venue"]}):
+            group = [l for l in leads if l["venue"] == key]
+            guys = sum(l["guys"] or 0 for l in group)
+            people = sum(l["party_size"] or 0 for l in group)
+            names = ", ".join(f"@{l['username'] or l['ig_user_id']} ({l['party_size']})" for l in group)
+            out.append(f"📋 Tonight at {self.venues[key]['name']} (host {self.host_for(key, night)}): "
+                       f"{len(group)} groups, {people - guys} girls, {guys} guys. {names}")
+        return out
 
     def _to_human(self, c, lead, d, msg_key, res: Result, who: str, reason: str) -> None:
         v = self.venues.get(d.get("venue") or "", {})
@@ -378,6 +422,21 @@ class Engine:
     def host_for(self, venue_key: str, night: date) -> str:
         """Host on duty from the Muse OS lineup (Nights tab), else the venue's config host."""
         return self.night_hosts.get(venue_key, {}).get(night.isoformat()) or self.venues[venue_key]["host"]
+
+    def dress_code_for(self, venue_key: str, night: date) -> str:
+        """That night's dress code: set for the night in Muse OS, else config by weekday, else the venue's default.
+        In config.yaml dress_code is either one line, or a list by day: {friday: ..., saturday: ..., default: ...}."""
+        own = self.night_dress.get(venue_key, {}).get(night.isoformat())
+        dc = self.venues[venue_key].get("dress_code") or ""
+        if not own and isinstance(dc, dict):
+            own = dc.get(WEEKDAYS[night.weekday()]) or dc.get("default") or next(iter(dc.values()), "")
+        return str(own or dc).strip().rstrip(".")
+
+    def apply_night_dress_codes(self, by_name: dict[str, dict[str, str | None]]) -> None:
+        """{venue name lowercase: {"2026-11-13": "All black" or None}} from Muse OS venues[].upcoming[].dress_code."""
+        keys = {v["name"].lower(): k for k, v in self.venues.items()}
+        self.night_dress = {keys[n]: {d: c for d, c in nights.items() if c}
+                            for n, nights in by_name.items() if n in keys}
 
     def apply_night_hosts(self, by_name: dict[str, dict[str, str | None]]) -> None:
         """{venue name lowercase: {"2026-11-13": "Mia" or None}} from GET /api/v1/venues upcoming[]."""
