@@ -1,0 +1,161 @@
+# Muse Hospitality DM bot settings.
+# Edit this file to change venues, hosts, the weekly schedule and every message the bot sends.
+# Lines marked TODO are guesses. Confirm them before going live.
+
+brand:
+  name: Muse Hospitality
+  timezone: America/New_York
+  # Time of day (24h) the thank-you / missed-you messages go out the day after the night.
+  followup_hour: 13
+  # A night "ends" at this hour the next morning. Anyone confirmed but not checked in by then is a no-show.
+  night_cutoff_hour: 5
+  # When a promoter types a reply by hand in the Instagram app, the bot stays quiet in that chat for this long.
+  human_takeover_hours: 12
+  # Guys' ticket links change weekly: supervisors send them by Monday morning and they go in the
+  # Venues page in Muse OS ("Guys ticket link"), which the bot re-reads every 5 minutes.
+  # Fallback only, used when Muse OS has no link for a venue:
+  ticket_link: ""
+  # Monday at this hour the team gets an alert listing venues running this week with no ticket link.
+  ticket_check_hour: 12
+
+# Which venues Muse is running each night of the week. Nebula ran Fri/Sat in 9 of the last 10 months.
+# Once Muse OS is connected, the nights on its Venues page replace this.
+schedule:
+  monday: []
+  tuesday: []
+  wednesday: []
+  thursday: [public_hotel, noflex]
+  friday: [noflex, nebula]
+  saturday: [nyx_karaoke, nebula]
+  sunday: []
+
+# guys_policy:
+#   ticket = guys are welcome but buy a ticket (the confirmation includes the link)  <- what the team usually says
+#   ok     = guys are fine, no ticket
+#   ratio  = guys OK if there are at least `min_girls_per_guy` girls for every guy, otherwise ask a human
+#   ask    = always hand the chat to a human when guys are in the group
+#   no     = girls only (hands off so the team can offer another venue)
+# arrive_by is used as "get there {arrive_by}". The team's standard is "after 11 and before 12".
+venues:
+  nebula:
+    name: Nebula
+    aliases: [nebula]
+    host: Devin
+    arrive_by: after 11 and before 12
+    dress_code: Heels or leather boots are recommended (please try to avoid sneakers or Uggs)
+    guys_policy: ticket
+    pay_model: per_guest        # per_guest | per_guest_capped | flat   (for reporting)
+  public_hotel:
+    name: Public Hotel
+    aliases: [public hotel, public, the public, public rooftop, public hotel rooftop]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  noflex:
+    name: NOFLEX
+    aliases: [noflex, no flex]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  den_social:
+    name: Den Social
+    aliases: [den social, den]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  marquee:
+    name: Marquee
+    aliases: [marquee]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ask            # strict door
+  nyx_karaoke:
+    name: NYX Karaoke
+    aliases: [nyx, nyx karaoke, karaoke]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 10:30      # TODO: confirm
+    dress_code: Cute going-out fit, anything goes
+    guys_policy: ticket
+    pay_model: flat
+  phd_rooftop:
+    name: PHD Rooftop
+    aliases: [phd, phd rooftop, phd rooftop lounge]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  petite_disco:
+    name: Petite Disco
+    aliases: [petite disco, petite]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  highlight_room:
+    name: Highlight Room
+    aliases: [highlight room, highlight]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  loosies:
+    name: Loosies
+    aliases: [loosies, loosie, loosies rooftop]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  slate:
+    name: Slate
+    aliases: [slate]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+  maru:
+    name: Maru
+    aliases: [maru, maru karaoke]
+    host: Devin                 # TODO: confirm host
+    arrive_by: after 11 and before 12
+    dress_code: Heels and dresses are recommended, no sneakers or Uggs
+    guys_policy: ticket
+
+# Answers to the questions the team gets every night (from the DM history). The bot answers these itself.
+faq:
+  free: Girls are always free! Free entry plus a table with drinks 🥂
+  table: Yes! Free entry and a table with drinks for the girls 🥂
+  guys_cost: "Guys just need a ticket: {ticket_link}"
+  timing: "Get there {arrive_by} and text us when you're outside!"
+
+# Every message the bot sends. Short, casual, one emoji: that doubled reply rates in the DM history.
+# Placeholders: {venue} {host} {arrive_by} {dress_code} {night} {party_size} {options} {next_options} {ticket_link}
+messages:
+  greeting: "Hiii! We'd love to have you out 💕"
+  greeting_returning: "Hiii welcome back 💕"
+  ask_night: Which night are you thinking?
+  ask_venue: "{night} we have {options}, which one?"
+  ask_party_size: How many in your group, including you?
+  ask_guys: Any guys coming?
+  ask_guys_count: How many guys?
+  ask_age: Is everyone over 21? Only physical IDs are accepted
+  no_venue_that_night: "We're not out {night}, but this week we're at {options}! Want to come one of those nights?"
+  guys_check: Let me check with the door about the guys at {venue} and get right back to you 🙏
+  age_check: Thanks for being honest! Let me check with the team and get back to you 💕
+  handoff: Let me grab someone from the team for that, one sec 💕
+  decline: No worries! We'll invite you again soon 🫶
+  confirmation: >-
+    You're all set for {venue} {night}! {dress_code}.
+    Bring a physical ID and get there {arrive_by}. Text us when you're outside and {host} will walk you in 💕
+  # Used when the venue has a confirmation message on the Venues page in Muse OS; that text follows it.
+  confirmation_intro: "You're all set for {venue} {night}! 💕"
+  guys_ticket: "Guys just need a ticket: {ticket_link}"
+  arrival_ack: Yay! {host} is coming out to grab you, 2 min 💕
+  otw_ack: "Perfect! Text us when you're outside and {host} will come grab you 💕"
+  already_confirmed: "You're already on for {venue} {night}! Text us when you're outside 💕"
+  thank_you: >-
+    Thank you for coming out with Muse last night 💕 This week we're at {next_options} if you want to come again!
+  missed_you: "We missed you last night! Want us to save you a spot? This week we're at {next_options} 🫶"
