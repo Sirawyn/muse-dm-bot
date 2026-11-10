@@ -177,6 +177,17 @@ def check_admin(token: str | None) -> None:
         raise HTTPException(401, "bad admin token")
 
 
+_PRIVACY = os.path.join(os.path.dirname(__file__), "static", "privacy.html")
+
+
+@app.get("/privacy")
+@app.get("/data-deletion")
+async def privacy():
+    """Privacy policy and data deletion instructions, for the Meta app settings."""
+    from fastapi.responses import FileResponse
+    return FileResponse(_PRIVACY, media_type="text/html")
+
+
 @app.get("/health")
 async def health():
     return {"ok": True}
@@ -296,6 +307,7 @@ async def start_jobs():
                         engine.apply_venue_ticket_links(await asyncio.to_thread(museos.venue_ticket_links))
                         engine.apply_scouts(await asyncio.to_thread(museos.scouts))
                         engine.apply_night_hosts(await asyncio.to_thread(museos.venue_hosts))   # who's on the door
+                        engine.apply_night_dress_codes(await asyncio.to_thread(museos.venue_dress_codes))
                         engine.apply_checkins(await asyncio.to_thread(museos.checkins))         # door check-ins
                     except Exception:
                         log.exception("Muse OS read failed, using last known venues")
