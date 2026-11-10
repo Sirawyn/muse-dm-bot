@@ -53,6 +53,8 @@ class Engine:
         # (Team, role Scout), or listed in config under scouts:.
         self.scouts: list[dict] = list(config.get("scouts") or [])
         self.night_hosts: dict[str, dict[str, str]] = {}   # venue key -> {night: host on duty}
+        self.lineup: dict[str, set[str]] = {}               # venue key -> nights on the Muse OS lineup
+        self.lineup_dates: set[str] = set()
 
     # helpers
     def now(self) -> datetime:
@@ -62,6 +64,10 @@ class Engine:
         return dt.astimezone(self.tz) if dt.tzinfo else dt.replace(tzinfo=self.tz)
 
     def venues_on(self, night: date) -> list[str]:
+        """The dated lineup from Muse OS wins for the nights it covers (the next 14); after that, or without
+        Muse OS, the weekly pattern."""
+        if self.lineup_dates and night.isoformat() <= max(self.lineup_dates):
+            return [k for k, nights in self.lineup.items() if night.isoformat() in nights]
         return list(self.cfg.get("schedule", {}).get(WEEKDAYS[night.weekday()], []) or [])
 
     def night_label(self, night: date, now: datetime) -> str:
@@ -377,6 +383,9 @@ class Engine:
         """{venue name lowercase: {"2026-11-13": "Mia" or None}} from GET /api/v1/venues upcoming[]."""
         keys = {v["name"].lower(): k for k, v in self.venues.items()}
         self.night_hosts = {keys[n]: {d: h for d, h in nights.items() if h} for n, nights in by_name.items() if n in keys}
+        # the dated lineup itself: which venue runs which night, host or not
+        self.lineup = {keys[n]: set(nights) for n, nights in by_name.items() if n in keys}
+        self.lineup_dates = {d for nights in self.lineup.values() for d in nights}
 
     def apply_scouts(self, scouts: list[dict]) -> None:
         if scouts:

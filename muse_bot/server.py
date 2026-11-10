@@ -1,4 +1,11 @@
-"""Web server that connects the engine to Instagram (Meta's official Instagram API with Instagram Login).
+"""Web server that connects the engine to Instagram through Meta's official API.
+
+META_LOGIN picks the Meta setup:
+  facebook  (default) "API setup with Facebook login": the Muse Instagram is linked to a Facebook Page.
+            IG_ACCESS_TOKEN = the Page access token, FB_PAGE_ID = the Page's id. Calls go to graph.facebook.com.
+  instagram the older "API setup with Instagram login" (only on apps made before late 2026).
+            IG_ACCESS_TOKEN = Instagram user token, IG_ACCOUNT_ID = Instagram account id. Calls go to
+            graph.instagram.com and the token is renewed weekly.
 
 Run:  uvicorn muse_bot.server:app --host 0.0.0.0 --port 8000
 Env:  IG_ACCESS_TOKEN, IG_ACCOUNT_ID, META_APP_SECRET, VERIFY_TOKEN,
@@ -35,7 +42,11 @@ APP_SECRET = os.getenv("META_APP_SECRET", "")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 NOTIFY_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
-GRAPH = f"https://graph.instagram.com/{os.getenv('GRAPH_VERSION', 'v23.0')}"
+META_LOGIN = os.getenv("META_LOGIN", "facebook").strip().lower()
+FB_PAGE_ID = os.getenv("FB_PAGE_ID", "")
+_HOST = "graph.instagram.com" if META_LOGIN == "instagram" else "graph.facebook.com"
+GRAPH = f"https://{_HOST}/{os.getenv('GRAPH_VERSION', 'v23.0')}"
+SEND_AS = IG_ACCOUNT_ID if META_LOGIN == "instagram" else (FB_PAGE_ID or "me")   # who the DM is sent from
 
 engine = Engine(load_config(os.getenv("MUSE_CONFIG", "config.yaml")), Store(os.getenv("MUSE_DB", "muse_leads.db")))
 
@@ -51,6 +62,8 @@ def token() -> str:
 
 async def refresh_token_if_due() -> None:
     """Instagram tokens last 60 days. Renew weekly so it never lapses (the token must be at least a day old)."""
+    if META_LOGIN != "instagram":
+        return   # a Page access token from a long-lived login doesn't expire
     last = engine.store.get_setting("ig_token_refreshed_at")
     if not token() or (last and datetime.now(timezone.utc) - datetime.fromisoformat(last) < timedelta(days=7)):
         return
@@ -67,7 +80,7 @@ async def refresh_token_if_due() -> None:
 app = FastAPI(title="Muse DM bot")
 http = httpx.AsyncClient(timeout=10)
 # Muse OS web app is the system of record. Without MUSE_OS_URL the bot still replies; leads stay in its local db.
-museos = MuseOSSync.from_env(engine.tz) if os.getenv("MUSE_OS_URL") else None
+museos = MuseOSSync.from_env(engine.tz) if os.getenv("MUSE_OS_URL", "").startswith("http") else None
 
 
 def _sync_now() -> None:
@@ -107,7 +120,7 @@ async def send(ig_user_id: str, out: Out) -> None:
     if out.quick_replies:
         msg["quick_replies"] = [{"content_type": "text", "title": q[:20], "payload": q[:20]}
                                 for q in out.quick_replies[:13]]
-    r = await http.post(f"{GRAPH}/{IG_ACCOUNT_ID}/messages",
+    r = await http.post(f"{GRAPH}/{SEND_AS}/messages",
                         headers={"Authorization": f"Bearer {token()}"},
                         json={"recipient": {"id": ig_user_id}, "message": msg})
     if r.status_code >= 400:
@@ -236,12 +249,15 @@ async def start_jobs():
         while True:
             try:
                 if museos:
-                    engine.apply_venue_confirmations(await asyncio.to_thread(museos.venue_confirmations))
-                    engine.apply_venue_schedule(await asyncio.to_thread(museos.venue_nights))
-                    engine.apply_venue_ticket_links(await asyncio.to_thread(museos.venue_ticket_links))
-                    engine.apply_scouts(await asyncio.to_thread(museos.scouts))
-                    engine.apply_night_hosts(await asyncio.to_thread(museos.venue_hosts))   # who's on the door
-                    engine.apply_checkins(await asyncio.to_thread(museos.checkins))         # host door check-ins
+                    try:   # Muse OS being down must never stop follow-ups
+                        engine.apply_venue_confirmations(await asyncio.to_thread(museos.venue_confirmations))
+                        engine.apply_venue_schedule(await asyncio.to_thread(museos.venue_nights))
+                        engine.apply_venue_ticket_links(await asyncio.to_thread(museos.venue_ticket_links))
+                        engine.apply_scouts(await asyncio.to_thread(museos.scouts))
+                        engine.apply_night_hosts(await asyncio.to_thread(museos.venue_hosts))   # who's on the door
+                        engine.apply_checkins(await asyncio.to_thread(museos.checkins))         # door check-ins
+                    except Exception:
+                        log.exception("Muse OS read failed, using last known venues")
                 await refresh_token_if_due()
                 await notify(engine.weekly_ticket_check())
                 for guest, out in engine.run_jobs():
