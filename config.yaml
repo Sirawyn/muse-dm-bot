@@ -15,6 +15,13 @@ brand:
   # Venues page in Muse OS ("Guys ticket link"), which the bot re-reads every 5 minutes.
   # Fallback only, used when Muse OS has no link for a venue:
   ticket_link: ""
+  # Requests after late_after get "head over now, door closes at {last_entry}" instead of "get there after 11".
+  # After last entry the bot asks the team to check the door instead of confirming. A venue can set its own
+  # last_entry. Times after midnight belong to the night before (00:30 Friday night = 12:30am Saturday).
+  late_after: "23:30"
+  last_entry: "00:30"          # TODO: confirm per venue (the team has said "before 12:30" for Nebula)
+  # Each night at this time the team channel gets every venue's list for tonight, under that night's host.
+  digest_time: "21:00"
   # Monday at this hour the team gets an alert listing venues running this week with no ticket link.
   ticket_check_hour: 12
 
@@ -35,6 +42,12 @@ schedule:
 #   ratio  = guys OK if there are at least `min_girls_per_guy` girls for every guy, otherwise ask a human
 #   ask    = always hand the chat to a human when guys are in the group
 #   no     = girls only (hands off so the team can offer another venue)
+# dress_code is one line, or one per day when it changes by night, e.g.
+#   dress_code:
+#     friday: All black, heels recommended
+#     saturday: Dresses and heels
+#     default: Heels and dresses are recommended, no sneakers or Uggs
+# A dress code set for a specific night in Muse OS wins over both.
 # arrive_by is used as "get there {arrive_by}". The team's standard is "after 11 and before 12".
 venues:
   nebula:
@@ -153,6 +166,10 @@ messages:
   # Used when the venue has a confirmation message on the Venues page in Muse OS; that text follows it.
   confirmation_intro: "You're all set for {venue} {night}! 💕"
   guys_ticket: "Guys just need a ticket: {ticket_link}"
+  confirmation_late: >-
+    You're all set for {venue} {night}! {dress_code}.
+    Bring a physical ID and head over now, the door closes at {last_entry}. Text us when you're outside and {host} will walk you in 💕
+  late_check: Let me check if we can still get you in tonight, one sec 🙏
   arrival_ack: Yay! {host} is coming out to grab you, 2 min 💕
   otw_ack: "Perfect! Text us when you're outside and {host} will come grab you 💕"
   already_confirmed: "You're already on for {venue} {night}! Text us when you're outside 💕"
