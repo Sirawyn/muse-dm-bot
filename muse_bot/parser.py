@@ -59,7 +59,7 @@ ARRIVAL = [
 ON_THE_WAY = [r"\botw\b", r"\bon (the|our) way\b", r"\bmin(ute)?s?\s+away\b", r"\bthere in \d+",
               r"finding parking", r"around the block", r"pulling up"]
 UNDERAGE = [r"\b(is|am|im|i'm|she'?s|he'?s|turning)\s+(1[5-9]|20)\b", r"under\s*21", r"not 21",
-            r"\b(1[5-9]|20)\s*(y/?o|years? old)\b", r"(no|forgot (my|her|their)|lost (my|her)|don'?t have( a)?( physical)?) ids?\b",
+            r"\b(1[5-9]|20)\s*(y/?o|yrs?|years?)\s*(olds?)?\b", r"(no|forgot (my|her|their)|lost (my|her)|don'?t have( a)?( physical)?) ids?\b",
             r"photo (of|id)|picture of (my|her) id|passport photo", r"\bfake( id)?\b"]
 OVER21 = [r"\b(all|everyone( is)?|we'?re all|we are all|both|all of us|are)\s*(over\s*)?21\b", r"21\s*\+",
           r"over 21", r"21 and (over|up)", r"of age", r"\ball legal\b"]
@@ -124,10 +124,12 @@ def parse_night(t: str, now: datetime) -> date | None:
 
 def parse_venue(t: str, venues: dict) -> str | None:
     t = " " + re.sub(r"[^a-z0-9 ]", " ", t) + " "
+    squash = lambda x: re.sub(r"(.)\1+", r"\1", x)   # "nebulaa", "nooflex" -> typos of our venues
+    ts = squash(t)
     best, best_len = None, 0
     for key, v in venues.items():
         for alias in v.get("aliases", []) + [v["name"].lower()]:
-            if f" {alias} " in t and len(alias) > best_len:
+            if (f" {alias} " in t or f" {squash(alias)} " in ts) and len(alias) > best_len:
                 best, best_len = key, len(alias)
     return best
 
@@ -177,7 +179,8 @@ def parse_counts(text: str, expecting: str | None = None) -> tuple[int | None, i
         others = 1
     # explicit totals
     for pat in (r"\b(\d+) of us\b", r"\b(\d+) (?:\w+ )?total\b", r"\b(?:party|group|table) (?:of|for) (\d+)\b",
-                r"\b(\d+) (?:people|ppl)\b"):
+                r"\b(\d+) (?:people|ppl)\b", r"\b(\d+) in (?:my|our|the) (?:group|grp|party|crew|squad)\b",
+                r"\b(?:group|grp) (?:of|is) (\d+)\b", r"\b(?:we|i) (?:have|hv|got|are) (\d+)\b"):
         n = take(pat)
         if n is not None and total is None:
             total = n
@@ -209,7 +212,9 @@ def parse_counts(text: str, expecting: str | None = None) -> tuple[int | None, i
             guys = 0
         elif expecting == "guys" and YES.match(stripped):
             yes_no_count = True
-    if party is not None and party > 60:
+    if guys is None and re.search(r"\b(some|a few|a couple|couple|few) (of )?(guys|boys|dudes|men)\b|^\W*(yes|yeah|yea|yep)\W+(guys|boys)\b", t):
+        yes_no_count = True
+    if party is not None and party > 300:
         party = None
     return party, guys, yes_no_count
 

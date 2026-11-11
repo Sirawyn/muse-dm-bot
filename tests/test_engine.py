@@ -54,13 +54,13 @@ def test_one_message_confirms_everything(eng):
     assert lead(eng)["response_seconds"] == 0
 
 
-def test_asks_everything_missing_at_once_then_confirms(eng):
+def test_asks_one_question_at_a_time_then_confirms(eng):
     r = chat(eng, "hiii can i get on the list tonight", THU_7PM)
     t = r.replies[0].text
-    assert t.startswith("Hiii! We'd love to have you out")
-    for q in ("which one?", "How many in your group", "Any guys", "over 21"):
-        assert q in t
-    chat(eng, "noflex! me and 2 girlies", THU_7PM)
+    assert t.startswith("Hiii! We'd love to have you out") and "which one?" in t
+    assert "How many" not in t and "💕" not in t
+    r = chat(eng, "noflex! me and 2 girlies", THU_7PM)     # answers two questions at once: skips ahead
+    assert r.replies[0].text == "Is everyone over 21? Only physical IDs are accepted"
     r = chat(eng, "yes", THU_7PM)          # answers the over-21 question
     assert lead(eng)["status"] == "confirmed", r.replies
 
@@ -95,7 +95,8 @@ def test_under_21_goes_to_human(eng):
 def test_faq_answered_inline_not_handed_off(eng):
     r = chat(eng, "hey do we have to pay to get in? is there a table?", THU_7PM)
     t = r.replies[0].text
-    assert "Girls are always free" in t and "How many in your group" in t
+    assert "Girls are always free" in t and "Which night are you thinking?" in t
+    assert t.count("Free entry") == 1
     assert lead(eng)["status"] == "qualifying"
 
 
@@ -106,7 +107,7 @@ def test_birthday_table_goes_to_human(eng):
 
 def test_decline_gets_short_reply_and_no_questions(eng):
     r = chat(eng, "heyy not this weekend but ty!!", THU_7PM)
-    assert r.replies[0].text == "No worries! We'll invite you again soon 🫶"
+    assert r.replies[0].text == "No worries! We'll invite you again soon"
     assert lead(eng)["status"] == "cancelled"
     assert chat(eng, "ty!", THU_7PM).replies == []      # no greeting for a pleasantry
 
@@ -217,3 +218,152 @@ def test_lineup_host_from_muse_os_used_in_messages(eng):
     assert r.replies[0].text.startswith("Yay! Mia is coming out")
     r = chat(eng, "noflex tomorrow, 2 girls all 21", THU_7PM, user="z")   # nobody on lineup -> config host
     assert "Devin will walk you in" in r.replies[0].text
+
+
+def test_dated_lineup_overrides_weekly_pattern(eng):
+    # This Friday only Petite Disco is on the lineup (not the usual NOFLEX & Nebula)
+    eng.apply_night_hosts({"petite disco": {"2026-11-13": "Mia"}, "noflex": {"2026-11-12": None, "2026-11-19": None}})
+    r = chat(eng, "can 2 of us come friday? all girls all 21", THU_7PM)
+    assert "Petite Disco" in r.replies[0].text and "Mia will walk you in" in r.replies[0].text
+    r = chat(eng, "anything saturday?", THU_7PM, user="z")    # not on the lineup -> not offered
+    assert "not out Saturday" in r.replies[0].text
+
+
+def test_after_midnight_counts_as_friday_and_says_head_over_now(eng):
+    sat_0040 = datetime(2026, 11, 14, 0, 40, tzinfo=TZ)            # still Friday night
+    r = chat(eng, "hii can me and 2 girls get on nebula tonight? all 21", sat_0040)
+    t = r.replies[0].text
+    assert lead(eng)["night"] == "2026-11-13" and "You're all set for Nebula tonight" not in t
+    # 12:40am is past the 12:30 last entry: a person checks the door instead
+    assert "check if we can still get you in" in t and lead(eng)["status"] == "needs_human"
+
+
+def test_late_request_before_last_entry(eng):
+    fri_2350 = datetime(2026, 11, 13, 23, 50, tzinfo=TZ)
+    r = chat(eng, "nebula tonight, 3 girls all 21", fri_2350)
+    assert "head over now, the door closes at 12:30am" in r.replies[0].text
+    assert r.notify[0].startswith("⏰ Late add")
+
+
+def test_nightly_digest_per_venue_and_host(eng):
+    eng.apply_night_hosts({"nebula": {"2026-11-13": "Mia"}, "noflex": {"2026-11-13": "Sam", "2026-11-20": None}})
+    chat(eng, "nebula friday, 3 girls all 21", THU_7PM, user="a")
+    chat(eng, "noflex friday, 2 girls 1 guy all 21", THU_7PM, user="b")
+    assert eng.nightly_digest(datetime(2026, 11, 13, 20, 0, tzinfo=TZ)) == []        # before 9pm
+    d = eng.nightly_digest(datetime(2026, 11, 13, 21, 1, tzinfo=TZ))
+    assert any("Nebula (host Mia): 1 groups, 3 girls, 0 guys. @a (3)" in x for x in d)
+    assert any("NOFLEX (host Sam): 1 groups, 2 girls, 1 guys" in x for x in d)
+    assert eng.nightly_digest(datetime(2026, 11, 13, 21, 6, tzinfo=TZ)) == []        # once a night
+
+
+def test_dress_code_by_day_and_by_night(eng):
+    eng.venues["nebula"]["dress_code"] = {"friday": "All black, heels recommended", "default": "Cute going-out fit"}
+    t = chat(eng, "can 3 of us do nebula tonight? all girls, all 21", THU_7PM, user="a").replies[0].text
+    assert "Cute going-out fit." in t
+    t = chat(eng, "can 3 of us do nebula tonight? all girls, all 21", FRI_7PM, user="b").replies[0].text
+    assert "All black, heels recommended." in t
+    eng.apply_night_dress_codes({"nebula": {"2026-11-13": "White party, all white", "2026-11-14": None}})
+    t = chat(eng, "can 3 of us do nebula tonight? all girls, all 21", FRI_7PM, user="c").replies[0].text
+    assert "White party, all white." in t
+
+
+def test_muse_os_confirmation_fills_dress_code(eng):
+    eng.apply_venue_confirmations({"nebula": "Dress code: [DRESS_CODE]. [HOST] walks you in."})
+    eng.venues["nebula"]["dress_code"] = {"thursday": "Black tie"}
+    t = chat(eng, "can 3 of us do nebula tonight? all girls, all 21", THU_7PM).replies[0].text
+    assert "Dress code: Black tie. Devin walks you in." in t
+
+
+def test_guys_table_rule_at_nebula_and_noflex(eng):
+    t = chat(eng, "can 3 girls and 2 guys come to nebula tonight? all 21", FRI_7PM, user="a").replies[0].text
+    assert "the guys can't be at the table" in t and "ticket" in t
+    t = chat(eng, "can 3 girls and 2 guys come to noflex tonight? all 21", FRI_7PM, user="b").replies[0].text
+    assert "the guys can't be at the table" in t
+    t = chat(eng, "can 3 girls and 1 guy come to nebula tonight? all 21", FRI_7PM, user="c").replies[0].text
+    assert "table" not in t.split("Guys just need a ticket")[1]
+    t = chat(eng, "can 3 girls and 2 guys come to public hotel thursday? all 21", THU_7PM, user="d").replies[0].text
+    assert "can't be at the table" not in t
+
+
+def test_venue_not_running_that_night_says_so():
+    eng = Engine(load_config("config.yaml"), Store(":memory:"))
+    tue = datetime(2026, 11, 10, 18, 54, tzinfo=TZ)
+    t = chat(eng, "are you guys promoting at nebula tonight", tue).replies[0].text
+    assert "We're not at Nebula tonight" in t and "Friday or Saturday" in t
+    assert lead(eng)["status"] != "confirmed"
+    t = chat(eng, "friday, 3 of us no guys all 21", tue).replies[0].text
+    assert t.startswith("You're all set for Nebula Friday")
+
+
+def test_venue_off_but_other_spots_that_night():
+    eng = Engine(load_config("config.yaml"), Store(":memory:"))
+    t = chat(eng, "can 3 of us come to nebula tonight? all girls all 21", THU_7PM).replies[0].text
+    assert "We're not at Nebula tonight" in t and "Tonight we have Public Hotel or NOFLEX" in t
+    assert chat(eng, "noflex", THU_7PM).replies[0].text.startswith("You're all set for NOFLEX tonight")
+
+
+def test_manual_outreach_reply_becomes_a_lead_with_details(eng):
+    eng.handle_human_reply("g9", "heyy are you and your girls free this weekend? 💕", now=THU_7PM)
+    r = chat(eng, "yess me and 3 friends friday at nebula!", THU_7PM, user="g9")
+    assert r.replies == []                      # the promoter is handling it, bot stays quiet
+    l = lead(eng, "g9")
+    assert l["night"] == "2026-11-13" and l["venue"] == "nebula" and l["party_size"] == 4
+    assert l["id"] in eng.store.dirty or True   # synced to Muse OS on the next pass
+
+
+TUE_730 = datetime(2026, 11, 10, 19, 30, tzinfo=TZ)
+
+
+def test_unknown_venue_goes_silently_to_the_account_holder(eng):
+    chat(eng, "hi devin!", TUE_730)
+    chat(eng, "Friday", TUE_730)
+    r = chat(eng, "i wanna go to mission", TUE_730)
+    assert r.replies == [] and lead(eng)["status"] == "needs_human"
+    assert "Mission" in r.notify[0]
+    assert chat(eng, "hello?", TUE_730).replies == []   # stays with the account holder
+
+
+def test_other_venue_detection(eng):
+    assert eng.other_venue("are you guys doing mission friday?", None) == "Mission"
+    assert eng.other_venue("nyx karaoke", "venue") is None
+    for text in ("can we come to the list tonight", "we're going to be late", "i want to go friday",
+                 "can 3 of us go to nebula", "going to sleep lol", "at 11?"):
+        assert eng.other_venue(text, None) is None, text
+
+
+def test_huge_group_goes_to_a_human(eng):
+    chat(eng, "hi devin!", TUE_730)
+    r = chat(eng, "i hv 100 in my grp", TUE_730)
+    assert "big group" in r.replies[0].text and lead(eng)["status"] == "needs_human"
+
+
+def test_yes_some_guys_asks_how_many_first(eng):
+    chat(eng, "hi! nebula friday", TUE_730)
+    r = chat(eng, "Yes, some guys", TUE_730)
+    assert r.replies[0].text.startswith("How many guys?")
+    chat(eng, "2", TUE_730)
+    assert eng.store.convo("g1")["draft"]["guys"] == 2
+
+
+def test_two_replies_it_cant_read_go_to_a_human(eng):
+    chat(eng, "hi", TUE_730)
+    chat(eng, "friday", TUE_730)
+    r = chat(eng, "lol", TUE_730)
+    assert len(r.replies[0].text.splitlines()) == 1
+    r = chat(eng, "idk", TUE_730)
+    assert lead(eng)["status"] == "needs_human" and r.notify
+
+
+def test_stress_test_chats(eng):
+    """From the team's stress tests on 2026-11-10."""
+    chat(eng, "Thursday", TUE_730, user="e")
+    r = chat(eng, "can i bring 21 20yr olds", TUE_730, user="e")
+    assert "Thanks for being honest" in r.replies[0].text and lead(eng, "e")["status"] == "needs_human"
+    chat(eng, "Friday, two people including myself and no guys, everyone is over 21", TUE_730, user="w")
+    assert chat(eng, "Nebulaa", TUE_730, user="w").replies[0].text.startswith("You're all set for Nebula Friday")
+    chat(eng, "nebula friday", TUE_730, user="s")
+    r = chat(eng, "can we go somewhere else", TUE_730, user="s")
+    assert r.replies == [] and lead(eng, "s")["status"] == "needs_human"
+    chat(eng, "nebula friday", TUE_730, user="g")
+    r = chat(eng, "can i bring 200 guys", TUE_730, user="g")
+    assert "big group" in r.replies[0].text

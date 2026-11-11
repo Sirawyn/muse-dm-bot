@@ -187,6 +187,7 @@ class Engine:
         res = Result()
         d = c["draft"]
         first_touch = not lead.get("first_reply_at")
+        before = {k: val for k, val in d.items() if k != "stalls"}
         if p.night:
             d["night"] = p.night.isoformat()
         if p.venue:
@@ -208,6 +209,10 @@ class Engine:
         if p.wants_human:
             self._to_human(c, lead, d, "handoff", res, who, reason="birthday, bottles, discount, complaint or job")
             return res
+        other = None if p.venue else self.other_venue(p.text, c.get("expecting"))
+        if other:   # a club we don't work with: the account holder answers, the bot stays out of it
+            self._to_human(c, lead, d, None, res, who, reason=f"asked about {other}, a venue we don't work with")
+            return res
         if p.declined and not (p.party_size or p.venue):
             res.replies.append(Out(self.msgs["decline"]))
             self.store.update_lead(lead["id"], status="cancelled", notes="said not this time")
@@ -215,6 +220,13 @@ class Engine:
             return res
         if d.get("over21") is False:
             self._to_human(c, lead, d, "age_check", res, who, reason="someone under 21 or without a physical ID")
+            return res
+        big = int(self.cfg["brand"].get("big_group", 15))
+        if d.get("over21") is False:
+            self._to_human(c, lead, d, "age_check", res, who, reason="someone under 21 or without a physical ID")
+            return res
+        if max(d.get("party_size") or 0, d.get("guys") or 0) > big:
+            self._to_human(c, lead, d, "big_group", res, who, reason=f"group of {max(d.get('party_size') or 0, d.get('guys') or 0)}, too big for the bot")
             return res
         faq_lines = self.faq_answers(p, d)
 
@@ -259,8 +271,13 @@ class Engine:
                 d["venue"] = options[0]   # only one spot that night, no need to ask
             else:
                 names = [self.venues[k]["name"] for k in options]
-                questions.append(self.fmt("ask_venue", night=self.night_label(night, now),
-                                          options=self.join_names(names)))
+                said_something = p.over21 is not None or p.party_size or p.guys is not None or p.night
+                if c.get("expecting") == "venue" and not said_something:
+                    questions.append(self.fmt("venue_reask", night=self.night_label(night, now),
+                                              options=self.join_names(names)))
+                else:
+                    questions.append(self.fmt("ask_venue", night=self.night_label(night, now),
+                                              options=self.join_names(names)))
                 quick = names
                 expecting = "venue"
         if not d.get("night") and not questions:
@@ -284,8 +301,27 @@ class Engine:
 
         self.store.update_lead(lead["id"], night=d.get("night"), venue=d.get("venue"),
                                party_size=d.get("party_size"), guys=d.get("guys"))
+        if p.guys_yes_no_count and d.get("guys_unknown") and self.msgs["ask_guys_count"] in questions:
+            # she just said "yes, some guys": a bare number next is the guys count, so ask that first
+            questions.remove(self.msgs["ask_guys_count"])
+            questions.insert(0, self.msgs["ask_guys_count"])
+            expecting = "guys_count"
+        # One question at a time, like a person texting. She can still answer several at once: anything she
+        # volunteers is kept and the bot skips straight to whatever is still missing.
+        questions = questions[:1]
+        if expecting not in ("night", "venue"):
+            quick = ["No guys, just girls", "Yes, some guys"] if expecting == "guys" else []
+        progressed = {k: val for k, val in d.items() if k != "stalls"} != before
+        if questions and not first_touch and not progressed and not faq_lines:
+            # her reply didn't answer anything: never paste the same block again
+            d["stalls"] = d.get("stalls", 0) + 1
+            if d["stalls"] >= 2:
+                self._to_human(c, lead, d, "handoff", res, who, reason=f"bot didn't understand: \"{p.text}\"")
+                return res
+            questions = questions[:1]
+        elif progressed:
+            d.pop("stalls", None)
         if questions:
-            # Ask every missing thing at once, so it takes as few messages as possible.
             text = "\n".join(q[:1].upper() + q[1:] for q in faq_lines + questions)
             if first_touch:
                 returning = len(self.store.leads("ig_user_id=?", (lead["ig_user_id"],))) > 1
@@ -335,7 +371,8 @@ class Engine:
         v = self.venues.get((d or {}).get("venue") or "", {})
         link = self.ticket_link(v) or ""
         out = []
-        for key in p.faq:
+        keys = [k for k in p.faq if not (k == "table" and "free" in p.faq)]   # "free" already covers the table
+        for key in keys:
             if key in faq:
                 out.append(faq[key].format(ticket_link=link or "we'll send you the link",
                                            arrive_by=v.get("arrive_by", "before 12")).strip())
@@ -397,9 +434,37 @@ class Engine:
                        f"{len(group)} groups, {people - guys} girls, {guys} guys. {names}")
         return out
 
+    NOT_VENUES = {"the list", "list", "guestlist", "guest list", "the club", "club", "it", "you", "your", "sleep",
+                  "bed", "work", "school", "the door", "door", "the table", "dinner", "the party", "party", "that",
+                  "this", "there", "here", "one", "both", "either", "whichever", "any", "anything", "a club"}
+
+    def other_venue(self, text: str, expecting: str | None) -> str | None:
+        """A venue name we don't work with: "i wanna go to mission", "are you doing mission friday".
+        Only when she names a place after go/going/come/doing, or answers the venue question with one."""
+        t = re.sub(r"[^\w' ]", " ", text.lower())
+        t = re.sub(r"\b(lol|lmao|haha+|pls|please|plz|rn|now|too|again|ok|okay)\b", " ", t)
+        t = re.sub(r"\b(tonight|tomorrow|this|next|on)?\s*(mon|tues|wednes|thurs|fri|satur|sun)day\b|\btonight\b|\btmrw\b|\btomorrow\b|\bweekend\b|\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b", " ", t)
+        if re.search(r"\bsomewhere else\b|\b(another|other|different) (club|venue|spot|place|party)\b", t):
+            return "somewhere else"
+        m = re.search(r"\b(?:go(?:ing)? to|come to|coming to|doing|at|promoting|promote)\s+((?:the\s+)?[a-z][a-z']*(?:\s+[a-z][a-z']*){0,2})\s*$", t.strip())
+        name = m.group(1).strip() if m else None
+        if not name and expecting == "venue":
+            words = t.split()
+            if 1 <= len(words) <= 3 and not re.search(r"\d|\b(yes|yeah|no|idk|lol|ok|okay|hm+|what|which|either|both|hi|hey)\b", t):
+                name = " ".join(words)
+        if not name or name in self.NOT_VENUES or name.removeprefix("the ") in self.NOT_VENUES:
+            return None
+        ours = {a.lower() for v in self.venues.values() for a in [v["name"], *v.get("aliases", [])]}
+        if any(re.search(rf"\b{re.escape(a)}\b", name) for a in ours):
+            return None
+        if re.search(r"\b(guys|girls|people|friends|us|me|we|later|late|early|night)\b", name):
+            return None
+        return name.title()
+
     def _to_human(self, c, lead, d, msg_key, res: Result, who: str, reason: str) -> None:
         v = self.venues.get(d.get("venue") or "", {})
-        res.replies.append(Out(self.fmt(msg_key, venue=v.get("name", "the venue"))))
+        if msg_key:   # None = hand over without the bot saying anything
+            res.replies.append(Out(self.fmt(msg_key, venue=v.get("name", "the venue"))))
         self.store.update_lead(lead["id"], status="needs_human", notes=reason, night=d.get("night"),
                                venue=d.get("venue"), party_size=d.get("party_size"), guys=d.get("guys"))
         c.update(stage="needs_human", expecting=None)

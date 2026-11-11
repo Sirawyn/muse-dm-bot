@@ -148,13 +148,16 @@ faq:
   guys_cost: "Guys just need a ticket: {ticket_link}"
   timing: "Get there {arrive_by} and text us when you're outside!"
 
-# Every message the bot sends. Short, casual, one emoji: that doubled reply rates in the DM history.
+# Every message the bot sends. Short and casual. One question per message, like a person texting.
+# Hearts only on the confirmation, so they don't feel automated.
 # Placeholders: {venue} {host} {arrive_by} {dress_code} {night} {party_size} {options} {next_options} {ticket_link}
 messages:
-  greeting: "Hiii! We'd love to have you out 💕"
-  greeting_returning: "Hiii welcome back 💕"
+  greeting: "Hiii! We'd love to have you out"
+  greeting_returning: "Hiii welcome back"
   ask_night: Which night are you thinking?
   ask_venue: "{night} we have {options}, which one?"
+  venue_reask: "{night} we're only at {options}, which one works for you?"
+  big_group: That's a big group! Let me grab someone from the team to set it up for you
   ask_party_size: How many in your group, including you?
   ask_guys: Any guys coming?
   ask_guys_count: How many guys?
@@ -167,9 +170,9 @@ messages:
   venue_off_ask: Want to come one of those?
   no_venue_that_night: "We're not out {night}, but this week we're at {options}! Want to come one of those nights?"
   guys_check: Let me check with the door about the guys at {venue} and get right back to you 🙏
-  age_check: Thanks for being honest! Let me check with the team and get back to you 💕
-  handoff: Let me grab someone from the team for that, one sec 💕
-  decline: No worries! We'll invite you again soon 🫶
+  age_check: Thanks for being honest! Let me check with the team and get back to you
+  handoff: Let me grab someone from the team for that, one sec
+  decline: No worries! We'll invite you again soon
   confirmation: >-
     You're all set for {venue} {night}! {dress_code}.
     Bring a physical ID and get there {arrive_by}. Text us when you're outside and {host} will walk you in 💕
@@ -177,14 +180,14 @@ messages:
   confirmation_intro: "You're all set for {venue} {night}! 💕"
   guys_ticket: "Guys just need a ticket: {ticket_link}"
   # venues with guys_at_table: one, when 2 or more guys are coming
-  guys_no_table: "Heads up, the guys can't be at the table, but you can bring them drinks from it 💕"
+  guys_no_table: "Heads up, the guys can't be at the table, but you can bring them drinks from it"
   confirmation_late: >-
     You're all set for {venue} {night}! {dress_code}.
     Bring a physical ID and head over now, the door closes at {last_entry}. Text us when you're outside and {host} will walk you in 💕
   late_check: Let me check if we can still get you in tonight, one sec 🙏
-  arrival_ack: Yay! {host} is coming out to grab you, 2 min 💕
-  otw_ack: "Perfect! Text us when you're outside and {host} will come grab you 💕"
-  already_confirmed: "You're already on for {venue} {night}! Text us when you're outside 💕"
+  arrival_ack: Yay! {host} is coming out to grab you, 2 min
+  otw_ack: "Perfect! Text us when you're outside and {host} will come grab you"
+  already_confirmed: "You're already on for {venue} {night}! Text us when you're outside"
   thank_you: >-
-    Thank you for coming out with Muse last night 💕 This week we're at {next_options} if you want to come again!
-  missed_you: "We missed you last night! Want us to save you a spot? This week we're at {next_options} 🫶"
+    Thank you for coming out with Muse last night This week we're at {next_options} if you want to come again!
+  missed_you: "We missed you last night! Want us to save you a spot? This week we're at {next_options}"

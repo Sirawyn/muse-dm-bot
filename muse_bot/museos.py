@@ -125,6 +125,11 @@ class MuseOSSync:
         """Local addition: host on duty per venue and night, from venues[].upcoming (next 14 lineup nights)."""
         return {v["name"].lower(): {u["night"]: u.get("host") for u in v.get("upcoming") or []} for v in self._venues()}
 
+    def venue_dress_codes(self) -> dict[str, dict[str, str | None]]:
+        """Local addition: dress code per venue and night, from venues[].upcoming[].dress_code when Muse OS sends it."""
+        return {v["name"].lower(): {u["night"]: u.get("dress_code") for u in v.get("upcoming") or []}
+                for v in self._venues()}
+
     def scouts(self) -> list[dict]:
         return self._get("/api/v1/scouts")["scouts"]
 
