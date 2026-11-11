@@ -140,8 +140,13 @@ class MuseOSSync:
                 for v in self._venues()}
 
     def venue_policies(self) -> dict[str, str]:
-        """Local addition: "Guys' entry" per venue from the Venues page: ticket | cover | ask (unset venues left out)."""
+        """Local addition: "Guys' entry" per venue from the Venues page: ticket | cover | free | ask (unset venues left out)."""
         return {v["name"].lower(): v["guys_policy"] for v in self._venues() if v.get("guys_policy")}
+
+    def night_policies(self) -> dict[str, dict[str, str | None]]:
+        """Local addition: guys' entry for one night (venues[].upcoming[].guys_policy), None = venue's usual."""
+        return {v["name"].lower(): {u["night"]: u.get("guys_policy") for u in v.get("upcoming") or []}
+                for v in self._venues()}
 
     def list_closes(self) -> tuple[dict[str, str | None], dict[str, dict[str, str | None]]]:
         """Local addition: guestlist closing time per venue (venues[].list_closes) and per night (upcoming[].list_closes)."""

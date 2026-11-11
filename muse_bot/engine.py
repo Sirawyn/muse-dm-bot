@@ -56,6 +56,7 @@ class Engine:
         self.lineup: dict[str, set[str]] = {}               # venue key -> nights on the Muse OS lineup
         self.night_dress: dict[str, dict[str, str]] = {}    # venue key -> {night: dress code} from Muse OS
         self.night_cover: dict[str, dict[str, str]] = {}    # venue key -> {night: guys' cover} from Muse OS
+        self.night_policy: dict[str, dict[str, str]] = {}   # venue key -> {night: guys' entry} from Muse OS
         self.night_links: dict[str, dict[str, str]] = {}    # venue key -> {night: guys' ticket link} from Muse OS
         self.night_closes: dict[str, dict[str, str]] = {}   # venue key -> {night: guestlist closing "HH:MM"}
         self.lineup_dates: set[str] = set()
@@ -73,6 +74,13 @@ class Engine:
         if self.lineup_dates and night.isoformat() <= max(self.lineup_dates):
             return [k for k, nights in self.lineup.items() if night.isoformat() in nights]
         return list(self.cfg.get("schedule", {}).get(WEEKDAYS[night.weekday()], []) or [])
+
+    def _offer_ask(self, choices: list[str], nights: list[str]) -> str:
+        """'Want to come Thursday?' when there's one thing to offer, 'one of those' only when there are several."""
+        if len(choices) == 1:
+            key = "venue_off_ask_night" if nights else "venue_off_ask_venue"
+            return self.fmt(key, choice=nights[0] if nights else choices[0])
+        return self.msgs["venue_off_ask"]
 
     def night_label(self, night: date, now: datetime) -> str:
         base = night_for(now)
@@ -209,6 +217,11 @@ class Engine:
         if over21 is not None:
             d["over21"] = over21
 
+        if p.unsure_count or (c.get("expecting") in ("party_size", "guys_count") and not p.party_size and re.match(
+                r"^\W*(i'?m |im )?(not sure|unsure|idk|i don'?t know|dont know|no idea|tbd|not certain)( yet)?( tbh| lol)?\W*$",
+                p.text.strip().lower())):
+            self._to_human(c, lead, d, "handoff_unsure_count", res, who, reason="not sure how many are coming yet")
+            return res
         if p.wants_human:
             self._to_human(c, lead, d, "handoff", res, who, reason="birthday, signs, bottles, discount, complaint or job")
             return res
@@ -254,9 +267,9 @@ class Engine:
             if nxt:
                 parts.append(self.fmt("venue_off_next", venue=vname,
                                       venue_nights=self.join_names([self.night_label(n, now) for n in nxt])))
-            parts.append(self.msgs["venue_off_ask"])
-            questions.append(" ".join(parts))
             quick = [self.venues[k]["name"] for k in still] + [self.night_label(n, now).capitalize() for n in nxt]
+            parts.append(self._offer_ask(quick, nights=[self.night_label(n, now) for n in nxt]))
+            questions.append(" ".join(parts))
             if still:
                 d.pop("venue"); expecting = "venue"
             else:
@@ -276,9 +289,9 @@ class Engine:
                                       options=self.join_names([self.venues[k]["name"] for k in others])))
             if not its and not others:
                 parts.append(self.fmt("venue_off_week", options=self._week_options(now)))
-            parts.append(self.msgs["venue_off_ask"])
-            questions.append(" ".join(p for p in parts if p))
             quick = [self.night_label(n, now).capitalize() for n in its] + [self.venues[k]["name"] for k in others]
+            parts.append(self._offer_ask(quick, nights=[self.night_label(n, now) for n in its]))
+            questions.append(" ".join(p for p in parts if p))
             if others:
                 d.pop("venue")          # "friday" keeps asking venue for Friday; "noflex" keeps tonight
                 expecting = "venue"
@@ -361,14 +374,14 @@ class Engine:
         elif progressed:
             d.pop("stalls", None)
         if questions:
-            text = "\n".join(q[:1].upper() + q[1:] for q in faq_lines + questions)
+            text = " ".join(q[:1].upper() + q[1:] for q in faq_lines + questions)   # one paragraph, reads like a person
             if first_touch:
                 returning = len(self.store.leads("ig_user_id=?", (lead["ig_user_id"],))) > 1
                 hello = self.msgs.get("greeting_returning") if returning else None
                 if faq_lines and not hello:   # she asked something: answer it right away, no long hello
                     text = self.msgs.get("greeting_short", "Hi!").strip() + " " + text
                 else:
-                    text = (hello or self.msgs["greeting"]).strip() + "\n" + text
+                    text = (hello or self.msgs["greeting"]).strip() + " " + text
             res.replies.append(Out(text, quick if len(quick) <= 13 else []))
             c["expecting"] = expecting
             return res
@@ -386,7 +399,7 @@ class Engine:
             self._to_human(c, lead, d, "handoff", res, who,
                            reason=f"asked for {v['name']} on a night it's not on the schedule")
             return res
-        policy = v.get("guys_policy", "ok")
+        policy = self.policy_for(d["venue"], d.get("night"), "ok")
         if guys and (policy in ("ask", "no") or
                      (policy == "ratio" and girls < guys * v.get("min_girls_per_guy", 2))):
             self._to_human(c, lead, d, "guys_check", res, who,
@@ -443,7 +456,9 @@ class Engine:
         link = self.ticket_link(v, (d or {}).get("night")) if v else self.ticket_link({})
         out = []
         keys = [k for k in p.faq if not (k == "table" and "free" in p.faq)]   # "free" already covers the table
-        if v.get("guys_policy") == "cover" and "guys_cost_cover" in faq:
+        if self.guys_free((d or {}).get("venue"), (d or {}).get("night")) and "guys_cost_free" in faq:
+            keys = ["guys_cost_free" if k == "guys_cost" else k for k in keys]
+        elif self.policy_for((d or {}).get("venue"), (d or {}).get("night")) == "cover" and "guys_cost_cover" in faq:
             keys = ["guys_cost_cover" if k == "guys_cost" else k for k in keys]
         if not link and "guys_cost_nolink" in faq:
             keys = ["guys_cost_nolink" if k == "guys_cost" else k for k in keys]
@@ -470,10 +485,12 @@ class Engine:
             text = self.fmt("confirmation_intro", **kw) + "\n\n" + v["confirmation_text"].replace("[HOST]", v["host"]).replace("[DRESS_CODE]", kw["dress_code"])
         else:
             text = self.fmt("confirmation", **kw)
-        if d.get("guys") and v.get("guys_policy") == "cover":   # pay at the door, no ticket
+        if d.get("guys") and self.guys_free(d["venue"], d["night"]):
+            text += "\n" + self.msgs["guys_free"]
+        elif d.get("guys") and self.policy_for(d["venue"], d["night"]) == "cover":   # pay at the door, no ticket
             cover = self.cover_for(d["venue"], d["night"])
             text += "\n" + (self.fmt("guys_cover", cover=cover) if cover else self.msgs["guys_cover_unknown"])
-        elif d.get("guys") and v.get("guys_policy", "ticket") == "ticket":
+        elif d.get("guys") and self.policy_for(d["venue"], d["night"], "ticket") == "ticket":
             link = self.ticket_link(self.venues[d["venue"]], d["night"])
             text += "\n" + self.fmt("guys_ticket", ticket_link=link or "we'll send you the link",
                                      cover=self.cover_note(d["venue"], d["night"]))
@@ -633,6 +650,28 @@ class Engine:
             cover = covers.pop() if len(covers) == 1 else None
         return cover or None
 
+    def policy_for(self, venue_key: str | None, night: str | None, default: str | None = None) -> str | None:
+        """Guys' entry for that night: the night's own setting from Muse OS wins, else the venue's."""
+        if not venue_key or venue_key not in self.venues:
+            return default
+        return self.night_policy.get(venue_key, {}).get(night or "") or self.venues[venue_key].get("guys_policy", default)
+
+    def apply_night_policies(self, by_name: dict[str, dict[str, str | None]]) -> None:
+        """{venue name lowercase: {"2026-11-13": "free"|"ticket"|"cover"|"ask"|None}} from venues[].upcoming[].guys_policy."""
+        keys = {v["name"].lower(): k for k, v in self.venues.items()}
+        self.night_policy = {keys[n]: {d: str(x).lower() for d, x in nights.items()
+                                       if str(x or "").lower() in ("ticket", "cover", "ask", "free")}
+                             for n, nights in by_name.items() if n in keys}
+
+    def guys_free(self, venue_key: str | None, night: str | None) -> bool:
+        """Guys get in free: Guys' entry set to free in Muse OS, or that night's cover entered as free/$0."""
+        if not venue_key or venue_key not in self.venues:
+            return False
+        if self.policy_for(venue_key, night) in ("free", "ok"):
+            return True
+        cover = (self.cover_for(venue_key, night) or "").strip().lower().replace(" ", "")
+        return cover in ("free", "$0", "0", "none", "nocover")
+
     def cover_note(self, venue_key: str | None, night: str | None) -> str:
         """' ($40)' when that night's cover is set in Muse OS, else ''."""
         cover = self.cover_for(venue_key, night)
@@ -665,10 +704,10 @@ class Engine:
                 or self.cfg["brand"].get("ticket_link") or "")
 
     def apply_venue_policies(self, by_name: dict[str, str]) -> None:
-        """Guys' entry chosen on the Venues page in Muse OS (ticket | cover | ask) overrides config.yaml."""
+        """Guys' entry chosen on the Venues page in Muse OS (ticket | cover | free | ask) overrides config.yaml."""
         for v in self.venues.values():
             pol = (by_name.get(v["name"].lower()) or "").lower()
-            if pol in ("ticket", "cover", "ask"):
+            if pol in ("ticket", "cover", "ask", "free"):
                 v["guys_policy"] = pol
 
     def apply_night_ticket_links(self, by_name: dict[str, dict[str, str | None]]) -> None:
@@ -696,7 +735,7 @@ class Engine:
         missing = []
         for n, keys in self.upcoming_nights(now):
             for k in keys:
-                if self.venues[k].get("guys_policy", "ticket") != "ticket":
+                if self.policy_for(k, n.isoformat(), "ticket") != "ticket" or self.guys_free(k, n.isoformat()):
                     continue   # cover at the door or no guys: no ticket link needed
                 label = f"{self.venues[k]['name']} {WEEKDAYS[n.weekday()].capitalize()}"
                 if not self.ticket_link(self.venues[k], n.isoformat()) and label not in missing:

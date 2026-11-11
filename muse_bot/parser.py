@@ -32,6 +32,12 @@ HANDOFF = [
     # signs for the table (birthday/bottle signs, sparklers): the team sets these up
     r"\bsigns?\b(?! up)", r"sparkler", r"\bbanner\b", r"\bneon\b",
 ]
+# She doesn't know her group size yet: the team follows up instead of the bot pushing for a number.
+UNSURE_COUNT = [
+    r"(not sure|unsure|don'?t know|dont know|idk|no idea|not certain|unclear|tbd).{0,25}how many",
+    r"how many.{0,30}(not sure|unsure|don'?t know|idk|tbd|yet to (see|find out))",
+    r"(not sure|unsure|don'?t know|idk) (yet )?(about|on) (the )?(number|numbers|count|headcount|group size)",
+]
 # Common questions with a fixed answer (answers live in config.yaml under faq:).
 FAQ = {
     "guys_cost": [r"(cover|ticket|pay|cost|price|free|how much).{0,40}\b(guys?|boys?|men|bf|boyfriend)\b",
@@ -112,6 +118,7 @@ class Parsed:
     guys_yes_no_count: bool = False   # said "yes" there are guys but no number
     over21: bool | None = None        # True = confirmed, False = someone under 21 / no physical ID
     wants_human: bool = False
+    unsure_count: bool = False
     faq: list[str] = field(default_factory=list)
     declined: bool = False
     arrived: bool = False             # here, in line, or on the way
@@ -279,7 +286,8 @@ def parse(text: str, now: datetime, venues: dict, expecting: str | None = None) 
     p.venue = parse_venue(t, venues)
     p.party_size, p.guys, p.guys_yes_no_count = parse_counts(text, expecting)
     p.over21 = parse_age(t, expecting)
-    p.wants_human = _any(HANDOFF, t)
+    p.unsure_count = _any(UNSURE_COUNT, t)
+    p.wants_human = _any(HANDOFF, t) or p.unsure_count
     p.faq = [k for k, pats in FAQ.items() if _any(pats, t)]
     if "guys_cost" in p.faq and "free" in p.faq:
         p.faq.remove("free")

@@ -356,6 +356,7 @@ async def start_jobs():
                         engine.apply_night_covers(await asyncio.to_thread(museos.venue_covers))
                         engine.apply_night_ticket_links(await asyncio.to_thread(museos.venue_night_links))
                         engine.apply_venue_policies(await asyncio.to_thread(museos.venue_policies))
+                        engine.apply_night_policies(await asyncio.to_thread(museos.night_policies))
                         engine.apply_list_closes(*(await asyncio.to_thread(museos.list_closes)))
                         engine.apply_checkins(await asyncio.to_thread(museos.checkins))         # door check-ins
                     except Exception:
