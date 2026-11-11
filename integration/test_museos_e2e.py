@@ -95,3 +95,19 @@ def test_list_closes_reach_the_bot(client, con):
     t = " ".join(r.text for r in eng.handle_message("444", "what time does the list close for nebula saturday", now=FRI,
                                                     username="ana").replies)
     assert "12:45" in t, t
+
+
+def test_guys_free_reaches_the_bot(client, con):
+    """Guys' entry Free, set for one night in Muse OS, beats the venue's ticket setting."""
+    key = auth.create_api_key(con, "DM bot")
+    con.execute("INSERT INTO nights(night, venue, host, guys_policy, updated_at) "
+                "SELECT '2026-11-14', name, NULL, 'Free', '' FROM venues WHERE name='Nebula' "
+                "ON CONFLICT(night, venue) DO UPDATE SET guys_policy='Free'")
+    con.commit()
+    s = MuseOSSync("", key, session=client)
+    assert s.night_policies()["nebula"]["2026-11-14"] == "free"
+    eng = Engine(load_config("/mnt/project-files/muse-dm-bot/config.yaml"), Store(":memory:"))
+    eng.apply_venue_policies(s.venue_policies())
+    eng.apply_night_policies(s.night_policies())
+    t = eng.handle_message("555", "nebula saturday, 3 girls 1 guy, all 21", now=FRI, username="zoe").replies[0].text
+    assert "Guys get in free too" in t, t
