@@ -466,10 +466,87 @@ def test_guestlist_closing_times_differ_by_venue(eng):
     eng.apply_list_closes({"public hotel": "20:00", "nebula": None}, {"noflex": {"2026-11-12": "22:00"}})
     thu_2030 = datetime(2026, 11, 12, 20, 30, tzinfo=TZ)
     t = chat(eng, "public hotel tonight? 3 girls all 21", thu_2030, user="l1").replies[0].text
-    assert t.startswith("Hi! We'd love to have you out\nThe list for Public Hotel tonight closed at 8pm.")
+    assert t.startswith("Hi! We'd love to have you out. The list for Public Hotel tonight closed at 8pm.")
     assert "Tonight we still have NOFLEX (until 10pm)" in t
     # only venues still open are offered
     t = chat(eng, "can we come tonight?", thu_2030, user="l2").replies[0].text
     assert "Public Hotel" not in t and "NOFLEX" in t
     # Nebula keeps the config time (1:30am) since Muse OS sent none
     assert eng.last_entry(eng.venues["nebula"], "2026-11-13") == "01:30"
+
+
+def test_venue_off_tonight_reads_like_a_person(eng):
+    wed = datetime(2026, 11, 11, 21, 0, tzinfo=TZ)
+    t = chat(eng, "are you at public hotel tonight?", wed, user="gr1").replies[0].text
+    assert "\n" not in t
+    assert "We're not at Public Hotel tonight. We'll be there" in t, t
+    assert "one of those" not in t and t.endswith("Want to come tomorrow?"), t
+
+
+@pytest.mark.parametrize("msg", ["im not sure how many people i have yet in my group",
+                                 "nebula friday! idk how many of us yet",
+                                 "dont know how many girls are coming yet",
+                                 "how many? not sure yet"])
+def test_unsure_group_size_goes_to_team(eng, msg):
+    r = chat(eng, msg, datetime(2026, 11, 11, 21, 0, tzinfo=TZ), user="u" + str(abs(hash(msg)) % 10000))
+    assert r.notify, [x.text for x in r.replies]
+
+
+def test_guys_free_from_muse_os(eng):
+    eng.apply_venue_policies({"public hotel": "free"})
+    wed = datetime(2026, 11, 11, 21, 0, tzinfo=TZ)
+    t = chat(eng, "public hotel thursday, 3 girls 2 guys, all 21", wed, user="gf1").replies[0].text
+    assert "Guys get in free too" in t and "ticket:" not in t, t
+    t = chat(eng, "do guys have to pay at public?", wed, user="gf2").replies[0].text
+    assert "Guys get in free at Public Hotel" in t, t
+    assert not any("Public Hotel" in x for x in eng.weekly_ticket_check(datetime(2026, 11, 16, 12, 5, tzinfo=TZ)))
+
+
+def test_guys_free_when_night_cover_is_free(eng):
+    eng.apply_night_covers({"nebula": {"2026-11-13": "Free"}})
+    t = chat(eng, "nebula friday 2 girls 1 guy all 21", datetime(2026, 11, 11, 21, 0, tzinfo=TZ), user="gf3").replies[0].text
+    assert "Guys get in free too" in t, t
+
+
+def test_idk_to_group_size_question_goes_to_team(eng):
+    now = datetime(2026, 11, 11, 21, 0, tzinfo=TZ)
+    chat(eng, "can i get on the list for nebula friday", now, user="idk1")
+    r = chat(eng, "not sure yet", now, user="idk1")
+    assert r.notify and "check in with you" in r.replies[0].text
+
+
+def test_night_guys_policy_overrides_venue(eng):
+    eng.apply_night_policies({"nebula": {"2026-11-13": "free", "2026-11-14": None}})
+    now = datetime(2026, 11, 11, 21, 0, tzinfo=TZ)
+    fri = chat(eng, "nebula friday 2 girls 1 guy all 21", now, user="np1").replies[0].text
+    sat = chat(eng, "nebula saturday 2 girls 1 guy all 21", now, user="np2").replies[0].text
+    assert "Guys get in free too" in fri, fri
+    assert "Guys get in free" not in sat and "ticket" in sat, sat
+
+
+def test_takeover_is_ten_minutes_and_restarts(eng):
+    from datetime import timedelta as td
+    chat(eng, "hey", THU_7PM)
+    eng.handle_human_reply("g1", "hey babe! which night?", now=THU_7PM)
+    eng.handle_human_reply("g1", "we have noflex tonight", now=THU_7PM + td(minutes=8))
+    assert chat(eng, "ok", THU_7PM + td(minutes=15)).replies == []            # restarted at 7:08
+    assert chat(eng, "tonight, 3 of us", THU_7PM + td(minutes=30)).replies  # past 10 minutes: bot is back
+
+
+def test_double_text_ends_takeover_when_bot_can_answer(eng):
+    from datetime import timedelta as td
+    chat(eng, "hey", THU_7PM)
+    eng.handle_human_reply("g1", "hey! which night?", now=THU_7PM)
+    assert chat(eng, "hmm let me think", THU_7PM + td(minutes=1)).replies == []
+    r = chat(eng, "noflex tonight, 3 girls all 21", THU_7PM + td(minutes=2))
+    assert r.replies, "double text the bot understands: it answers"
+
+
+def test_double_text_bot_cant_answer_stays_with_promoter(eng):
+    from datetime import timedelta as td
+    chat(eng, "hey", THU_7PM)
+    eng.handle_human_reply("g1", "hey! which night?", now=THU_7PM)
+    assert chat(eng, "wait", THU_7PM + td(minutes=1)).replies == []
+    assert chat(eng, "can we do a birthday sign", THU_7PM + td(minutes=2)).replies == []
+    eng.handle_human_reply("g1", "yes!", now=THU_7PM + td(minutes=3))
+    assert chat(eng, "tonight 3 girls", THU_7PM + td(minutes=4)).replies == []   # count restarts after promoter
