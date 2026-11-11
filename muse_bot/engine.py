@@ -150,6 +150,15 @@ class Engine:
             c.update(stage="qualifying", expecting=None, lead_id=lead["id"], draft={})
 
         paused = c.get("paused_until") and datetime.fromisoformat(c["paused_until"]) > now
+        if paused:
+            # A double text (her 2nd message since the promoter's last one) ends the hold-off, but only when
+            # the bot can actually answer it; otherwise it stays quiet and the promoter keeps the chat.
+            key = f"texts_since_human:{ig_user_id}"
+            n = int(self.store.get_setting(key) or 0) + 1
+            self.store.set_setting(key, str(n))
+            if n >= 2 and self._can_answer(p, c):
+                c["paused_until"] = None
+                paused = False
         if paused:   # a promoter is handling this chat by hand: stay quiet, but still note what she asked for
             d = c["draft"]
             for k, val in (("night", p.night and p.night.isoformat()), ("venue", p.venue),
@@ -605,12 +614,25 @@ class Engine:
         # Anything else ("thank you!!", emojis) gets no auto-reply so the bot doesn't over-talk.
         return res
 
+    def _can_answer(self, p, c: dict) -> bool:
+        """Would the bot have a real answer (not a handoff) for this message?"""
+        if p.wants_human or p.declined or p.pleasantry or p.over21 is False:
+            return False
+        if not (p.night or p.venue or p.party_size or p.guys is not None or p.guys_yes_no_count or p.faq
+                or p.over21 or p.arrived):
+            return False   # nothing the bot understood: leave it to the promoter
+        return not (not p.venue and self.other_venue(p.text, c.get("expecting")))
+
     # human promoter typed in the Instagram app
     def handle_human_reply(self, ig_user_id: str, text: str, now: datetime | None = None) -> None:
+        """Hold the bot off this chat for human_takeover_minutes, restarting on every message the promoter sends."""
         now = self._local(now or self.now())
         c = self.store.convo(ig_user_id)
-        hours = self.cfg["brand"].get("human_takeover_hours", 12)
-        c["paused_until"] = iso(now + timedelta(hours=hours))
+        mins = self.cfg["brand"].get("human_takeover_minutes")
+        if mins is None:
+            mins = 60 * self.cfg["brand"].get("human_takeover_hours", 12)
+        c["paused_until"] = iso(now + timedelta(minutes=mins))
+        self.store.set_setting(f"texts_since_human:{ig_user_id}", "0")
         self.store.log(now, ig_user_id, "human", text)
         lead = self.store.lead(c["lead_id"]) if c.get("lead_id") else None
         if lead and not lead.get("first_reply_at"):
