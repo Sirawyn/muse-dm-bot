@@ -139,9 +139,19 @@ class Engine:
             c.update(stage="qualifying", expecting=None, lead_id=lead["id"], draft={})
 
         paused = c.get("paused_until") and datetime.fromisoformat(c["paused_until"]) > now
-        if paused:
+        if paused:   # a promoter is handling this chat by hand: stay quiet, but still note what she asked for
+            d = c["draft"]
+            for k, val in (("night", p.night and p.night.isoformat()), ("venue", p.venue),
+                           ("party_size", p.party_size), ("guys", p.guys)):
+                if val is not None:
+                    d[k] = val
+            fields = {k: d[k] for k in ("night", "venue", "party_size", "guys") if d.get(k) is not None
+                      and lead.get(k) != d[k]}
+            if fields:
+                self.store.update_lead(lead["id"], **fields)
+            self.store.dirty.add(lead["id"])
             self.store.save_convo(c)
-            return res  # a promoter is handling this chat by hand
+            return res
 
         self.store.dirty.add(lead["id"])   # "last message at" changed
         scout_note = None
