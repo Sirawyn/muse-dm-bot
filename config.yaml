@@ -9,8 +9,10 @@ brand:
   followup_hour: 13
   # A night "ends" at this hour the next morning. Anyone confirmed but not checked in by then is a no-show.
   night_cutoff_hour: 5
-  # When a promoter types a reply by hand in the Instagram app, the bot stays quiet in that chat for this long.
-  human_takeover_hours: 12
+  # When a promoter types a reply by hand in the Instagram app, the bot stays quiet in that chat for this long,
+  # restarting with each message the promoter sends. If the girl double-texts (2 messages with no promoter reply
+  # in between) and the bot can answer, the hold-off ends early and the bot picks the chat back up.
+  human_takeover_minutes: 10
   # Guys' ticket links change weekly: supervisors send them by Monday morning and they go in the
   # Venues page in Muse OS ("Guys ticket link"), which the bot re-reads every 5 minutes.
   # Fallback only, used when Muse OS has no link for a venue:
