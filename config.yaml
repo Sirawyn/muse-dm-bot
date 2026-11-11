@@ -38,7 +38,7 @@ schedule:
 
 # guys_policy:
 #   ticket = guys are welcome but buy a ticket (the confirmation includes the link)  <- what the team usually says
-#   ok     = guys are fine, no ticket
+#   ok / free = guys get in free, no ticket (Muse OS "Free" Guys' entry, or a night's cover entered as free/$0)
 #   ratio  = guys OK if there are at least `min_girls_per_guy` girls for every guy, otherwise ask a human
 #   ask    = always hand the chat to a human when guys are in the group
 #   cover  = no ticket: guys pay a cover at the door (amount from the Weekly setup form in Muse OS)
@@ -149,6 +149,7 @@ faq:
   table: Yes, girls get free entry and a table with drinks{at_venue}.
   guys_cost: "Guys just need a ticket{cover}: {ticket_link}"
   guys_cost_nolink: "Guys are welcome, they just need a ticket{cover}. We'll send the link once you pick a night."
+  guys_cost_free: "Guys get in free{at_venue}, no ticket needed."
   guys_cost_cover: "No ticket needed, guys just pay {cover_amount}cover at the door."
   timing: "Best to get there {arrive_by}, the list closes at {last_entry}. Text us when you're outside!"
   schedule: "{week}!"
@@ -161,8 +162,8 @@ faq:
 # Hearts only on the confirmation, so they don't feel automated.
 # Placeholders: {venue} {host} {arrive_by} {dress_code} {night} {party_size} {options} {next_options} {ticket_link}
 messages:
-  greeting: "Hi! We'd love to have you out"
-  greeting_returning: "Hi! Welcome back"
+  greeting: "Hi! We'd love to have you out."
+  greeting_returning: "Hi! Welcome back."
   ask_night: Which night are you thinking?
   # she named a venue but not a night: offer that venue's nights
   ask_night_for_venue: "We're at {venue} {venue_nights}, which night works for you?"
@@ -176,11 +177,13 @@ messages:
   ask_guys_count: How many guys?
   ask_age: Is everyone over 21? Only physical IDs are accepted
   # a guest asks for a venue on a night we're not promoting there (all four lines join into one message)
-  venue_off_night: "We're not at {venue} {night}"
+  venue_off_night: "We're not at {venue} {night}."
   venue_off_next: "We'll be there {venue_nights}!"
   venue_off_alt: "{night} we have {options}."
   venue_off_week: "This week we're at {options}."
-  venue_off_ask: Want to come one of those?
+  venue_off_ask: Want to come to one of those?
+  venue_off_ask_night: "Want to come {choice}?"       # used when there's only one night to offer
+  venue_off_ask_venue: "Want to come to {choice} instead?"   # only one other venue to offer
   # she asks for a venue whose guestlist already closed tonight (closing times: list_closes per venue, or Muse OS)
   list_closed: "The list for {venue} {night} closed at {closes}."
   list_closed_alt: "{night} we still have {options}."
@@ -188,6 +191,7 @@ messages:
   guys_check: Let me check with the door about the guys at {venue} and get right back to you
   age_check: Thanks for being honest! Let me check with the team and get back to you
   handoff: Let me grab someone from the team for that, one sec
+  handoff_unsure_count: No worries! Someone from the team will check in with you to sort out your group.
   decline: No worries! We'll invite you again soon
   confirmation: >-
     You're all set for {venue} {night}! {dress_code}.
@@ -199,6 +203,7 @@ messages:
   # venues with guys_policy: cover
   guys_cover: "Guys pay a {cover} cover at the door, no ticket needed."
   guys_cover_unknown: Guys just pay cover at the door, no ticket needed.
+  guys_free: Guys get in free too, no ticket needed.
   # venues with guys_at_table: one, when 2 or more guys are coming
   guys_no_table: "Heads up, the guys can't be at the table, but you can bring them drinks from it"
   confirmation_late: >-
@@ -209,5 +214,5 @@ messages:
   otw_ack: "Perfect! Text us when you're outside and {host} will come grab you"
   already_confirmed: "You're already on for {venue} {night}! Text us when you're outside"
   thank_you: >-
-    Thank you for coming out with Muse last night This week we're at {next_options} if you want to come again!
-  missed_you: "We missed you last night! Want us to save you a spot? This week we're at {next_options}"
+    Thank you for coming out with Muse last night! This week we're at {next_options} if you want to come again!
+  missed_you: "We missed you last night! Want us to save you a spot? This week we're at {next_options}."
