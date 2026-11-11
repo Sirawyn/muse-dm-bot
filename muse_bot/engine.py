@@ -220,9 +220,9 @@ class Engine:
         elif p.guys_yes_no_count:
             d["guys_unknown"] = True
         over21 = p.over21
-        if over21 is None and d.get("guys") is not None and "over21" not in d and c.get("expecting") in (
-                "age", "guys", "guys_count", "party_size") and re.match(r"^\W*(yes+|yeah|yea|yep|yup|ya+)\b", p.text):
-            over21 = True   # a plain "yes" to the over-21 question asked alongside the others
+        if over21 is None and "over21" not in d and c.get("expecting") == "age" \
+                and re.match(r"^\W*(yes+|yeah|yea|yep|yup|ya+)\b", p.text):
+            over21 = True   # "yes" to the over-21 question (only that question: "yes 2 guys" answers the guys one)
         if over21 is not None:
             d["over21"] = over21
 
@@ -501,7 +501,7 @@ class Engine:
             text += "\n" + (self.fmt("guys_cover", cover=cover) if cover else self.msgs["guys_cover_unknown"])
         elif d.get("guys") and self.policy_for(d["venue"], d["night"], "ticket") == "ticket":
             link = self.ticket_link(self.venues[d["venue"]], d["night"])
-            text += "\n" + self.fmt("guys_ticket", ticket_link=link or "we'll send you the link",
+            text += "\n" + self.fmt("guys_ticket" if link else "guys_ticket_nolink", ticket_link=link or "",
                                      cover=self.cover_note(d["venue"], d["night"]))
             if not link:
                 res.notify.append(f"🎟️ Send {who} the guys' ticket link for {v['name']}")
@@ -553,7 +553,7 @@ class Engine:
         Only when she names a place after go/going/come/doing, or answers the venue question with one."""
         t = re.sub(r"[^\w' ]", " ", text.lower())
         t = re.sub(r"\b(lol|lmao|haha+|pls|please|plz|rn|now|too|again|ok|okay)\b", " ", t)
-        t = re.sub(r"\b(tonight|tomorrow|this|next|on)?\s*(mon|tues|wednes|thurs|fri|satur|sun)day\b|\btonight\b|\btmrw\b|\btomorrow\b|\bweekend\b|\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b", " ", t)
+        t = re.sub(r"\b(tonight|tomorrow|this|next|on)?\s*(mon|tues|wednes|thurs|fri|satur|sun)day\b|\btonight\b|\btmrw\b|\btomorrow\b|\b(this|next|the)?\s*weekend\b|\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b", " ", t)
         if re.search(r"\bsomewhere else\b|\b(another|other|different) (club|venue|spot|place)\b", t):
             return "somewhere else"
         m = re.search(r"\b(?:go(?:ing)? to|come to|coming to|doing|at|promoting|promote)\s+((?:the\s+)?[a-z][a-z']*(?:\s+[a-z][a-z']*){0,2})\s*$", t.strip())
@@ -567,7 +567,8 @@ class Engine:
         ours = {a.lower() for v in self.venues.values() for a in [v["name"], *v.get("aliases", [])]}
         if any(re.search(rf"\b{re.escape(a)}\b", name) for a in ours):
             return None
-        if re.search(r"\b(guys|girls|people|friends|us|me|we|later|late|early|night)\b", name):
+        if re.search(r"\b(guys|girls|people|friends|us|me|we|later|late|early|night|table|tables|list|guestlist|"
+                     r"drinks?|bottles?|section|booth|party|event|thing|anything|something|promo|promos)\b", name):
             return None
         return name.title()
 
@@ -647,7 +648,8 @@ class Engine:
 
     def host_for(self, venue_key: str, night: date) -> str:
         """Host on duty from the Muse OS lineup (Nights tab), else the venue's config host."""
-        return self.night_hosts.get(venue_key, {}).get(night.isoformat()) or self.venues[venue_key]["host"]
+        name = self.night_hosts.get(venue_key, {}).get(night.isoformat()) or self.venues[venue_key]["host"]
+        return (str(name).split() or [""])[0]   # first name only: never give guests an employee's full name
 
     def dress_code_for(self, venue_key: str, night: date) -> str:
         """That night's dress code: set for the night in Muse OS, else config by weekday, else the venue's default.

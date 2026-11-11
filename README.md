@@ -28,7 +28,8 @@ Guest DMs  ──► bot replies in seconds, asking everything it still needs in
   "sent me", "from" or "told me", the lead is tagged with that scout ("Referred by" on the lead in Muse OS) so
   they get their $5 per girl who arrives. Scouts come from the Team page in Muse OS (role Scout).
 * **Steps back when a promoter types by hand.** If anyone replies from the Instagram app, the bot goes quiet in
-  that chat for 12 hours, so it never talks over your team.
+  that chat for 10 minutes, restarting with each message they send, so it never talks over your team. If the
+  girl texts twice with no reply from the team and the bot can answer, it picks the chat back up right away.
 * **Knows the weekly schedule.** It offers only the venues running that night. If only one venue is on, it
   skips the question. If nothing is on, it offers the nights that are.
 * **Logs every lead**: first-message time, how fast it was answered, venue, party size, guys, confirmed,

@@ -57,10 +57,10 @@ def test_one_message_confirms_everything(eng):
 def test_asks_one_question_at_a_time_then_confirms(eng):
     r = chat(eng, "hiii can i get on the list tonight", THU_7PM)
     t = r.replies[0].text
-    assert t.startswith("Hi! We'd love to have you out") and "which one?" in t
+    assert t.startswith("Hi! We'd love to have you out") and "which one are you feeling?" in t
     assert "How many" not in t and "💕" not in t
     r = chat(eng, "noflex! me and 2 girlies", THU_7PM)     # answers two questions at once: skips ahead
-    assert r.replies[0].text == "Is everyone over 21? Only physical IDs are accepted"
+    assert r.replies[0].text == "Is everyone 21+? They only take physical IDs at the door"
     r = chat(eng, "yes", THU_7PM)          # answers the over-21 question
     assert lead(eng)["status"] == "confirmed", r.replies
 
@@ -78,7 +78,7 @@ def test_no_venue_that_night_offers_the_week(eng):
 def test_guys_get_ticket_link(eng):
     r = chat(eng, "public tonight, 3 girls 1 guy, everyone is 21+", THU_7PM)
     assert lead(eng)["status"] == "confirmed" and lead(eng)["guys"] == 1
-    assert "Guys just need a ticket: https://tix.example/muse" in r.replies[0].text
+    assert "guys just need to grab a ticket: https://tix.example/muse" in r.replies[0].text
 
 
 def test_strict_door_asks_human_about_guys(eng):
@@ -89,13 +89,13 @@ def test_strict_door_asks_human_about_guys(eng):
 
 def test_under_21_goes_to_human(eng):
     r = chat(eng, "noflex tonight 3 girls, I'm 21 my girl is 20 tho", THU_7PM)
-    assert lead(eng)["status"] == "needs_human" and "being honest" in r.replies[0].text
+    assert lead(eng)["status"] == "needs_human" and "telling me" in r.replies[0].text
 
 
 def test_faq_answered_inline_not_handed_off(eng):
     r = chat(eng, "hey do we have to pay to get in? is there a table?", THU_7PM)
     t = r.replies[0].text
-    assert "Girls are always free" in t and "Which night are you thinking?" in t
+    assert "Girls are always free" in t and "What night are you thinking?" in t
     assert t.count("table with drinks") == 1
     assert lead(eng)["status"] == "qualifying"
 
@@ -107,7 +107,7 @@ def test_birthday_table_goes_to_human(eng):
 
 def test_decline_gets_short_reply_and_no_questions(eng):
     r = chat(eng, "heyy not this weekend but ty!!", THU_7PM)
-    assert r.replies[0].text == "No worries! We'll invite you again soon"
+    assert r.replies[0].text == "No worries! We'll invite you next time"
     assert lead(eng)["status"] == "cancelled"
     assert chat(eng, "ty!", THU_7PM).replies == []      # no greeting for a pleasantry
 
@@ -276,11 +276,11 @@ def test_muse_os_confirmation_fills_dress_code(eng):
 
 def test_guys_table_rule_at_nebula_and_noflex(eng):
     t = chat(eng, "can 3 girls and 2 guys come to nebula tonight? all 21", FRI_7PM, user="a").replies[0].text
-    assert "the guys can't be at the table" in t and "ticket" in t
+    assert "the guys can't sit at the table" in t and "ticket" in t
     t = chat(eng, "can 3 girls and 2 guys come to noflex tonight? all 21", FRI_7PM, user="b").replies[0].text
-    assert "the guys can't be at the table" in t
+    assert "the guys can't sit at the table" in t
     t = chat(eng, "can 3 girls and 1 guy come to nebula tonight? all 21", FRI_7PM, user="c").replies[0].text
-    assert "table" not in t.split("Guys just need a ticket")[1]
+    assert "table" not in t.lower().split("guys just need to grab a ticket")[1]
     t = chat(eng, "can 3 girls and 2 guys come to public hotel thursday? all 21", THU_7PM, user="d").replies[0].text
     assert "can't be at the table" not in t
 
@@ -358,7 +358,7 @@ def test_stress_test_chats(eng):
     """From the team's stress tests on 2026-11-10."""
     chat(eng, "Thursday", TUE_730, user="e")
     r = chat(eng, "can i bring 21 20yr olds", TUE_730, user="e")
-    assert "Thanks for being honest" in r.replies[0].text and lead(eng, "e")["status"] == "needs_human"
+    assert "Thank you for telling me" in r.replies[0].text and lead(eng, "e")["status"] == "needs_human"
     chat(eng, "Friday, two people including myself and no guys, everyone is over 21", TUE_730, user="w")
     assert chat(eng, "Nebulaa", TUE_730, user="w").replies[0].text.startswith("You're all set for Nebula Friday")
     chat(eng, "nebula friday", TUE_730, user="s")
@@ -376,23 +376,23 @@ def test_faq_always_followed_by_a_question_or_next_step(eng):
     chat(eng, "friday, 3 of us no guys all 21", TUE_730, user="t1")
     assert lead(eng, "t1")["status"] == "confirmed"
     t = chat(eng, "do you have any tables for Nebula this weekend", TUE_730, user="t1").replies[0].text
-    assert "table" in t and "You're already on for Nebula Friday" in t
+    assert "table" in t and "You're already on the list for Nebula Friday" in t
 
 
 def test_answers_directly_using_what_she_asked(eng):
     t = chat(eng, "Heyy, do you have any tables for Nebula this weekend", TUE_730, user="q1").replies[0].text
-    assert t.startswith("Hi! Yes, girls get free entry and a table with drinks at Nebula.")
+    assert t.startswith("Hi! Yes, girls get in free and you get a table with drinks at Nebula!")
     assert "We're at Nebula Thursday, Friday or Saturday, which night works for you?" in t
     t = chat(eng, "how much is it for guys at noflex", TUE_730, user="q2").replies[0].text
-    assert "Guys just need a ticket" in t and "free" not in t.lower()
+    assert "uys just need to grab a ticket" in t and "free" not in t.lower()
 
 
 def test_weekly_cover_from_muse_os(eng):
     eng.apply_night_covers({"nebula": {"2026-11-13": "$40", "2026-11-14": "$50"}, "noflex": {"2026-11-13": None}})
     t = chat(eng, "3 girls 1 guy nebula friday all 21", TUE_730, user="c1").replies[0].text
-    assert "Guys just need a ticket ($40):" in t
+    assert "guys just need to grab a ticket ($40):" in t
     t = chat(eng, "2 girls 1 guy noflex friday all 21", TUE_730, user="c2").replies[0].text
-    assert "Guys just need a ticket:" in t
+    assert "guys just need to grab a ticket:" in t
     t = chat(eng, "how much is it for guys at nebula saturday", TUE_730, user="c3").replies[0].text
     assert "($50)" in t
 
@@ -407,10 +407,10 @@ def test_ticket_link_per_night_and_cover_only_venues(eng):
     eng.apply_night_covers({"noflex": {"2026-11-13": "$30"}})
     r = chat(eng, "2 girls 1 guy noflex friday all 21", TUE_730, user="n3")
     t = r.replies[0].text
-    assert "Guys pay a $30 cover at the door, no ticket needed." in t and "ticket:" not in t
+    assert "guys just pay a $30 cover at the door, they don't need a ticket." in t and "ticket:" not in t
     assert not any("ticket link" in n for n in r.notify)
     t = chat(eng, "how much is it for guys at noflex friday", TUE_730, user="n4").replies[0].text
-    assert "No ticket needed, guys just pay $30 cover at the door." in t
+    assert "Guys just pay $30 cover at the door, they don't need a ticket." in t
 
 
 def test_guys_entry_from_muse_os(eng):
@@ -425,12 +425,12 @@ THU = datetime(2026, 11, 12, 19, 0, tzinfo=TZ)
 
 @pytest.mark.parametrize("text,expect", [
     ("Which club?", "Tonight we're at"),
-    ("Hi! Thank you ~ can I bring a friend?", "bring as many girls as you want"),
+    ("Hi! Thank you ~ can I bring a friend?", "bring all the girls"),
     ("That's perf! When is a good time to come?", "the list closes at 12:30am"),
     ("Is there a dress code?", "no sneakers or Uggs"),
     ("heyy is this 21+??", "21+ with a physical ID"),
     ("wait so should I show them this message at the door? or how does this work", "text us here when you're outside"),
-    ("can my guy friend come", "Guys are welcome"),
+    ("can my guy friend come", "Guys can come"),
 ])
 def test_historical_questions_get_direct_answers(text, expect):
     eng = Engine(load_config("config.yaml"), Store(":memory:"))
@@ -459,7 +459,7 @@ def test_no_guys_is_not_a_no_to_the_age_question():
 def test_no_id_is_an_age_issue_not_another_venue():
     eng = Engine(load_config("config.yaml"), Store(":memory:"))
     r = chat(eng, "We are at another party rn so we don't have physical id", THU)
-    assert "Thanks for being honest" in r.replies[0].text
+    assert "Thank you for telling me" in r.replies[0].text
 
 
 def test_guestlist_closing_times_differ_by_venue(eng):
@@ -550,3 +550,22 @@ def test_double_text_bot_cant_answer_stays_with_promoter(eng):
     assert chat(eng, "can we do a birthday sign", THU_7PM + td(minutes=2)).replies == []
     eng.handle_human_reply("g1", "yes!", now=THU_7PM + td(minutes=3))
     assert chat(eng, "tonight 3 girls", THU_7PM + td(minutes=4)).replies == []   # count restarts after promoter
+
+
+def test_hosts_are_first_names_only(eng):
+    eng.apply_night_hosts({"noflex": {"2026-11-12": "Devin Deng"}})
+    t = chat(eng, "noflex tonight, 3 girls no guys all 21", THU_7PM).replies[0].text
+    assert "Devin will walk you in" in t and "Deng" not in t, t
+
+
+def test_table_this_weekend_is_not_another_venue(eng):
+    r = chat(eng, "hey are you guys doing a table this weekend?", datetime(2026, 11, 11, 17, 0, tzinfo=TZ), user="tw1")
+    assert r.replies and not r.notify, r
+
+
+def test_yes_to_guys_question_still_asks_age(eng):
+    now = datetime(2026, 11, 11, 17, 0, tzinfo=TZ)
+    for m in ["hey are you doing a table friday", "nebula", "4 of us"]:
+        chat(eng, m, now, user="ya1")
+    r = chat(eng, "yes 2 guys", now, user="ya1")
+    assert "21+" in r.replies[0].text, r.replies[0].text

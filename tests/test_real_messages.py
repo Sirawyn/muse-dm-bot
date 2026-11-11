@@ -39,7 +39,7 @@ def test_hand_off(text):
 @pytest.mark.parametrize("text", [
     "heyy not this weekend but ty!!", "Sorry, can’t this Saturday", "maybe next weekend when it's warmer 😛",
     "I can’t make it this time but I’d love to go in the future if possible!",
-    "Hiii all my friends are out of town this week 🥲", "unfortunately i won’t be able to this week",
+    "Hi all my friends are out of town this week 🥲", "unfortunately i won’t be able to this week",
     "Hey thanks for asking but i have plans for this wknd alr.",
 ])
 def test_decline(text):
