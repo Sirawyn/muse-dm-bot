@@ -125,6 +125,35 @@ class MuseOSSync:
         """Local addition: host on duty per venue and night, from venues[].upcoming (next 14 lineup nights)."""
         return {v["name"].lower(): {u["night"]: u.get("host") for u in v.get("upcoming") or []} for v in self._venues()}
 
+    def venue_dress_codes(self) -> dict[str, dict[str, str | None]]:
+        """Local addition: dress code per venue and night, from venues[].upcoming[].dress_code when Muse OS sends it."""
+        return {v["name"].lower(): {u["night"]: u.get("dress_code") for u in v.get("upcoming") or []}
+                for v in self._venues()}
+
+    def venue_covers(self) -> dict[str, dict[str, str | None]]:
+        """Local addition: guys' cover per venue and night, from venues[].upcoming[].cover (set weekly in Muse OS)."""
+        return {v["name"].lower(): {u["night"]: u.get("cover") for u in v.get("upcoming") or []} for v in self._venues()}
+
+    def venue_night_links(self) -> dict[str, dict[str, str | None]]:
+        """Local addition: guys' ticket link per venue and night, from venues[].upcoming[].ticket_link."""
+        return {v["name"].lower(): {u["night"]: u.get("ticket_link") for u in v.get("upcoming") or []}
+                for v in self._venues()}
+
+    def venue_policies(self) -> dict[str, str]:
+        """Local addition: "Guys' entry" per venue from the Venues page: ticket | cover | free | ask (unset venues left out)."""
+        return {v["name"].lower(): v["guys_policy"] for v in self._venues() if v.get("guys_policy")}
+
+    def night_policies(self) -> dict[str, dict[str, str | None]]:
+        """Local addition: guys' entry for one night (venues[].upcoming[].guys_policy), None = venue's usual."""
+        return {v["name"].lower(): {u["night"]: u.get("guys_policy") for u in v.get("upcoming") or []}
+                for v in self._venues()}
+
+    def list_closes(self) -> tuple[dict[str, str | None], dict[str, dict[str, str | None]]]:
+        """Local addition: guestlist closing time per venue (venues[].list_closes) and per night (upcoming[].list_closes)."""
+        vs = self._venues()
+        return ({v["name"].lower(): v.get("list_closes") for v in vs},
+                {v["name"].lower(): {u["night"]: u.get("list_closes") for u in v.get("upcoming") or []} for v in vs})
+
     def scouts(self) -> list[dict]:
         return self._get("/api/v1/scouts")["scouts"]
 

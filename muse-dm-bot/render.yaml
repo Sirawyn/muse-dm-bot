@@ -1,5 +1,5 @@
 # One-click setup on Render (render.com > New > Blueprint > pick this repo).
-# The disk keeps the guest database and the auto-renewed Instagram token across restarts.
+# The disk keeps the guest database and Meta settings across restarts.
 services:
   - type: web
     name: muse-dm-bot
@@ -12,9 +12,7 @@ services:
       sizeGB: 1
     envVars:
       - key: META_LOGIN
-        value: facebook
-      - key: FB_PAGE_ID
-        sync: false
+        value: unified
       - key: IG_ACCESS_TOKEN
         sync: false
       - key: IG_ACCOUNT_ID

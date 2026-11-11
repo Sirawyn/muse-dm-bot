@@ -29,17 +29,40 @@ HANDOFF = [
     r"hiring", r"\bjob\b", r"work (for|with) (you|muse)", r"be a promoter", r"promoter position",
     r"buy (a |the )?(table|bottle)", r"bottle service", r"(get|book|reserve) a table for (my|our|a) ",
     r"\bminimum\b", r"\bvip section\b", r"collab", r"partnership", r"sponsor",
+    # signs for the table (birthday/bottle signs, sparklers): the team sets these up
+    r"\bsigns?\b(?! up)", r"sparkler", r"\bbanner\b", r"\bneon\b",
+]
+# She doesn't know her group size yet: the team follows up instead of the bot pushing for a number.
+UNSURE_COUNT = [
+    r"(not sure|unsure|don'?t know|dont know|idk|no idea|not certain|unclear|tbd).{0,25}how many",
+    r"how many.{0,30}(not sure|unsure|don'?t know|idk|tbd|yet to (see|find out))",
+    r"(not sure|unsure|don'?t know|idk) (yet )?(about|on) (the )?(number|numbers|count|headcount|group size)",
 ]
 # Common questions with a fixed answer (answers live in config.yaml under faq:).
 FAQ = {
-    "guys_cost": [r"(cover|ticket|pay|cost|price|free).{0,40}\b(guys?|boys?|men|bf|boyfriend)\b",
-                  r"\b(guys?|boys?|men|bf|boyfriend)\b.{0,40}(cover|ticket|pay|cost|price|free)",
+    "guys_cost": [r"(cover|ticket|pay|cost|price|free|how much).{0,40}\b(guys?|boys?|men|bf|boyfriend)\b",
+                  r"can (my |a |the )?(guy ?friends?|boyfriend|bf|guys?|boys?|brother|husband)( friend)? (come|join)",
+                  r"(guys|boys|men) allowed", r"bring (a |my |some )?(guy|guys|boys?|boyfriend|bf)\b",
+                  r"\b(guys?|boys?|men|bf|boyfriend)\b.{0,40}(cover|ticket|pay|cost|price|free|how much)",
                   r"how much (would|are|is|do) (the )?tickets?", r"tickets? cost"],
     "free": [r"(have|need) to pay", r"\bfree\b.{0,15}\?|\bis it free\b|\bfree entry\b|\bfor free\b",
              r"how much", r"\bcost\b", r"\bprice\b", r"\bcover\b"],
     "table": [r"\btables?\b", r"\bdrinks?\b", r"\bbottles?\b"],
     "timing": [r"what time", r"(how )?late(st)? (can|should|do)", r"\bearliest\b", r"until when",
-               r"when should (we|i)", r"time should (we|i)"],
+               r"when should (we|i)", r"time should (we|i)", r"good time", r"(would|is) (\d{1,2}|midnight)\S* (be )?(ok|okay|good|fine)",
+               r"arrive (between|by|at|around)", r"when (do|does) (it|the list|guestlist|entry) close", r"list clos"],
+    "schedule": [r"where (will|are|r) (you|u|y'?all)", r"which (club|venue|place|spot)", r"what (club|venue|clubs|venues)",
+                 r"where (is|are) (it|the event|the party|you guys)", r"anything (for )?(today|tonight|tn|this week)",
+                 r"what('?s| is) (on|the plan|happening)", r"where('?s| is) (it|the party)"],
+    "bring_friends": [r"can (i|we) (bring|invite|add) (a |my |some )?(friend|girl|bestie|sister|roommate|plus|\+)",
+                      r"can my (friend|friends|girl ?friends?|bestie|sister|roommate)s? (come|join)",
+                      r"bring (more|other|extra) (girls|friends)"],
+    "dress_code": [r"dress ?code", r"what (should|do) (we|i) wear", r"(can|could) (i|we) wear", r"\bsneakers?\b\?",
+                   r"what to wear", r"\boutfits?\b.*\?"],
+    "age": [r"\b(is it|is this|is the event|is the club)\s*(1[89]|21)\s*(\+|plus|and over)?", r"\bage (limit|requirement)",
+            r"how old"],
+    "how_it_works": [r"how (does|do) (this|it) work", r"what do (i|we) (do|say) at the door", r"show (them|this|the bouncer)",
+                     r"do (i|we) (need|have) to (sign up|register|rsvp|fill)", r"how do (i|we) get (in|on)"],
 }
 DECLINE = [
     r"not this (weekend|wknd|week|time|saturday|friday|thursday|sat|fri)", r"can'?t (make it|this|tonight|come|go)",
@@ -59,7 +82,7 @@ ARRIVAL = [
 ON_THE_WAY = [r"\botw\b", r"\bon (the|our) way\b", r"\bmin(ute)?s?\s+away\b", r"\bthere in \d+",
               r"finding parking", r"around the block", r"pulling up"]
 UNDERAGE = [r"\b(is|am|im|i'm|she'?s|he'?s|turning)\s+(1[5-9]|20)\b", r"under\s*21", r"not 21",
-            r"\b(1[5-9]|20)\s*(y/?o|years? old)\b", r"(no|forgot (my|her|their)|lost (my|her)|don'?t have( a)?( physical)?) ids?\b",
+            r"\b(1[5-9]|20)\s*(y/?o|yrs?|years?)\s*(olds?)?\b", r"(no|forgot (my|her|their)|lost (my|her)|don'?t have( a)?( physical)?) ids?\b",
             r"photo (of|id)|picture of (my|her) id|passport photo", r"\bfake( id)?\b"]
 OVER21 = [r"\b(all|everyone( is)?|we'?re all|we are all|both|all of us|are)\s*(over\s*)?21\b", r"21\s*\+",
           r"over 21", r"21 and (over|up)", r"of age", r"\ball legal\b"]
@@ -95,6 +118,7 @@ class Parsed:
     guys_yes_no_count: bool = False   # said "yes" there are guys but no number
     over21: bool | None = None        # True = confirmed, False = someone under 21 / no physical ID
     wants_human: bool = False
+    unsure_count: bool = False
     faq: list[str] = field(default_factory=list)
     declined: bool = False
     arrived: bool = False             # here, in line, or on the way
@@ -124,10 +148,12 @@ def parse_night(t: str, now: datetime) -> date | None:
 
 def parse_venue(t: str, venues: dict) -> str | None:
     t = " " + re.sub(r"[^a-z0-9 ]", " ", t) + " "
+    squash = lambda x: re.sub(r"(.)\1+", r"\1", x)   # "nebulaa", "nooflex" -> typos of our venues
+    ts = squash(t)
     best, best_len = None, 0
     for key, v in venues.items():
         for alias in v.get("aliases", []) + [v["name"].lower()]:
-            if f" {alias} " in t and len(alias) > best_len:
+            if (f" {alias} " in t or f" {squash(alias)} " in ts) and len(alias) > best_len:
                 best, best_len = key, len(alias)
     return best
 
@@ -177,7 +203,8 @@ def parse_counts(text: str, expecting: str | None = None) -> tuple[int | None, i
         others = 1
     # explicit totals
     for pat in (r"\b(\d+) of us\b", r"\b(\d+) (?:\w+ )?total\b", r"\b(?:party|group|table) (?:of|for) (\d+)\b",
-                r"\b(\d+) (?:people|ppl)\b"):
+                r"\b(\d+) (?:people|ppl)\b", r"\b(\d+) in (?:my|our|the) (?:group|grp|party|crew|squad)\b",
+                r"\b(?:group|grp) (?:of|is) (\d+)\b", r"\b(?:we|i) (?:have|hv|got|are) (\d+)\b"):
         n = take(pat)
         if n is not None and total is None:
             total = n
@@ -209,7 +236,9 @@ def parse_counts(text: str, expecting: str | None = None) -> tuple[int | None, i
             guys = 0
         elif expecting == "guys" and YES.match(stripped):
             yes_no_count = True
-    if party is not None and party > 60:
+    if guys is None and re.search(r"\b(some|a few|a couple|couple|few) (of )?(guys|boys|dudes|men)\b|^\W*(yes|yeah|yea|yep)\W+(guys|boys)\b", t):
+        yes_no_count = True
+    if party is not None and party > 300:
         party = None
     return party, guys, yes_no_count
 
@@ -245,7 +274,7 @@ def parse_age(t: str, expecting: str | None = None) -> bool | None:
     if expecting == "age":
         if YES.match(t):
             return True
-        if NO.match(t):
+        if NO.match(t) and not re.search(rf"\b{GUYS}\b|\bjust (us )?girls\b", t):   # "no guys" isn't "no, not 21"
             return False
     return None
 
@@ -257,7 +286,8 @@ def parse(text: str, now: datetime, venues: dict, expecting: str | None = None) 
     p.venue = parse_venue(t, venues)
     p.party_size, p.guys, p.guys_yes_no_count = parse_counts(text, expecting)
     p.over21 = parse_age(t, expecting)
-    p.wants_human = _any(HANDOFF, t)
+    p.unsure_count = _any(UNSURE_COUNT, t)
+    p.wants_human = _any(HANDOFF, t) or p.unsure_count
     p.faq = [k for k, pats in FAQ.items() if _any(pats, t)]
     if "guys_cost" in p.faq and "free" in p.faq:
         p.faq.remove("free")
