@@ -55,6 +55,9 @@ class Engine:
         self.night_hosts: dict[str, dict[str, str]] = {}   # venue key -> {night: host on duty}
         self.lineup: dict[str, set[str]] = {}               # venue key -> nights on the Muse OS lineup
         self.night_dress: dict[str, dict[str, str]] = {}    # venue key -> {night: dress code} from Muse OS
+        self.night_cover: dict[str, dict[str, str]] = {}    # venue key -> {night: guys' cover} from Muse OS
+        self.night_links: dict[str, dict[str, str]] = {}    # venue key -> {night: guys' ticket link} from Muse OS
+        self.night_closes: dict[str, dict[str, str]] = {}   # venue key -> {night: guestlist closing "HH:MM"}
         self.lineup_dates: set[str] = set()
 
     # helpers
@@ -207,11 +210,7 @@ class Engine:
             d["over21"] = over21
 
         if p.wants_human:
-            self._to_human(c, lead, d, "handoff", res, who, reason="birthday, bottles, discount, complaint or job")
-            return res
-        other = None if p.venue else self.other_venue(p.text, c.get("expecting"))
-        if other:   # a club we don't work with: the account holder answers, the bot stays out of it
-            self._to_human(c, lead, d, None, res, who, reason=f"asked about {other}, a venue we don't work with")
+            self._to_human(c, lead, d, "handoff", res, who, reason="birthday, signs, bottles, discount, complaint or job")
             return res
         if p.declined and not (p.party_size or p.venue):
             res.replies.append(Out(self.msgs["decline"]))
@@ -221,6 +220,10 @@ class Engine:
         if d.get("over21") is False:
             self._to_human(c, lead, d, "age_check", res, who, reason="someone under 21 or without a physical ID")
             return res
+        other = None if p.venue else self.other_venue(p.text, c.get("expecting"))
+        if other:   # a club we don't work with: the account holder answers, the bot stays out of it
+            self._to_human(c, lead, d, None, res, who, reason=f"asked about {other}, a venue we don't work with")
+            return res
         big = int(self.cfg["brand"].get("big_group", 15))
         if d.get("over21") is False:
             self._to_human(c, lead, d, "age_check", res, who, reason="someone under 21 or without a physical ID")
@@ -228,14 +231,37 @@ class Engine:
         if max(d.get("party_size") or 0, d.get("guys") or 0) > big:
             self._to_human(c, lead, d, "big_group", res, who, reason=f"group of {max(d.get('party_size') or 0, d.get('guys') or 0)}, too big for the bot")
             return res
-        faq_lines = self.faq_answers(p, d)
+        faq_lines = self.faq_answers(p, d, now)
+        if d.get("night") or d.get("venue"):   # the next question already names the options
+            faq_lines = [f for f in faq_lines if not f.startswith(self.cfg.get("faq", {}).get("schedule", "~")[:12])]
 
         night = date.fromisoformat(d["night"]) if d.get("night") else None
         questions: list[str] = []
         quick: list[str] = []
         expecting = None
 
-        if night and d.get("venue") and d["venue"] not in self.venues_on(night):
+        if night and d.get("venue") and d["venue"] in self.venues_on(night) and not self.list_open(d["venue"], night, now):
+            vname = self.venues[d["venue"]]["name"]
+            label = self.night_label(night, now)
+            still = [k for k in self.venues_on(night) if self.list_open(k, night, now)]
+            nxt = [n for n, keys in self.upcoming_nights(now) if d["venue"] in keys and n != night][:2]
+            parts = [self.fmt("list_closed", venue=vname, night=label,
+                              closes=self._clock(self.last_entry(self.venues[d["venue"]], night.isoformat())))]
+            if still:
+                parts.append(self.fmt("list_closed_alt", night=label.capitalize(), options=self.join_names(
+                    [f"{self.venues[k]['name']} (until {self._clock(self.last_entry(self.venues[k], night.isoformat()))})"
+                     for k in still])))
+            if nxt:
+                parts.append(self.fmt("venue_off_next", venue=vname,
+                                      venue_nights=self.join_names([self.night_label(n, now) for n in nxt])))
+            parts.append(self.msgs["venue_off_ask"])
+            questions.append(" ".join(parts))
+            quick = [self.venues[k]["name"] for k in still] + [self.night_label(n, now).capitalize() for n in nxt]
+            if still:
+                d.pop("venue"); expecting = "venue"
+            else:
+                d.pop("night"); expecting = "night"
+        elif night and d.get("venue") and d["venue"] not in self.venues_on(night):
             # she named a venue we're not promoting that night: say so, offer its nights and that night's spots
             vname = self.venues[d["venue"]]["name"]
             label = self.night_label(night, now)
@@ -260,7 +286,7 @@ class Engine:
                 d.pop("night")          # "friday" means this venue on Friday
                 expecting = "night"
         elif night and not d.get("venue"):
-            options = self.venues_on(night)
+            options = [k for k in self.venues_on(night) if self.list_open(k, night, now)]
             if not options:
                 questions.append(self.fmt("no_venue_that_night", night=self.night_label(night, now),
                                           options=self._week_options(now)))
@@ -281,8 +307,14 @@ class Engine:
                 quick = names
                 expecting = "venue"
         if not d.get("night") and not questions:
-            questions.append(self.msgs["ask_night"])
-            quick = [self.night_label(n, now).capitalize() for n, _ in self.upcoming_nights(now)][:3]
+            its = [n for n, keys in self.upcoming_nights(now) if d.get("venue") in keys][:3]
+            if its:   # "tables at nebula this weekend?" -> "We're at Nebula Friday or Saturday, which night?"
+                questions.append(self.fmt("ask_night_for_venue", venue=self.venues[d["venue"]]["name"],
+                                          venue_nights=self.join_names([self.night_label(n, now) for n in its])))
+                quick = [self.night_label(n, now).capitalize() for n in its]
+            else:
+                questions.append(self.msgs["ask_night"])
+                quick = [self.night_label(n, now).capitalize() for n, _ in self.upcoming_nights(now)][:3]
             expecting = "night"
         if not d.get("party_size"):
             questions.append(self.msgs["ask_party_size"])
@@ -311,7 +343,14 @@ class Engine:
         questions = questions[:1]
         if expecting not in ("night", "venue"):
             quick = ["No guys, just girls", "Yes, some guys"] if expecting == "guys" else []
-        progressed = {k: val for k, val in d.items() if k != "stalls"} != before
+        progressed = ({k: val for k, val in d.items() if k != "stalls"} != before
+                      or bool(p.night or p.venue or p.party_size or p.guys is not None or p.over21 is not None))
+        asks_for_spot = re.search(r"\b(list|guest|come|join|go out|going out|tonight|tn|tmr|tomorrow|this week|weekend|"
+                                  r"spot|room|space|free|table|interested|down)\b", p.text.lower())
+        if questions and not progressed and not faq_lines and p.is_question and not asks_for_spot:
+            # a question the bot can't answer: don't dodge it with "which night?", get a person
+            self._to_human(c, lead, d, "handoff", res, who, reason=f"question the bot can't answer: \"{p.text}\"")
+            return res
         if questions and not first_touch and not progressed and not faq_lines:
             # her reply didn't answer anything: never paste the same block again
             d["stalls"] = d.get("stalls", 0) + 1
@@ -326,7 +365,10 @@ class Engine:
             if first_touch:
                 returning = len(self.store.leads("ig_user_id=?", (lead["ig_user_id"],))) > 1
                 hello = self.msgs.get("greeting_returning") if returning else None
-                text = (hello or self.msgs["greeting"]).strip() + "\n" + text
+                if faq_lines and not hello:   # she asked something: answer it right away, no long hello
+                    text = self.msgs.get("greeting_short", "Hi!").strip() + " " + text
+                else:
+                    text = (hello or self.msgs["greeting"]).strip() + "\n" + text
             res.replies.append(Out(text, quick if len(quick) <= 13 else []))
             c["expecting"] = expecting
             return res
@@ -350,9 +392,9 @@ class Engine:
             self._to_human(c, lead, d, "guys_check", res, who,
                            reason=f"{guys} guy(s) in a group of {party} for {v['name']}")
             return res
-        if now >= self.night_time(night, self.last_entry(v)):
+        if now >= self.night_time(night, self.last_entry(v, night.isoformat())):
             self._to_human(c, lead, d, "late_check", res, who,
-                           reason=f"asked after last entry ({self.last_entry(v)}) for {v['name']}, check the door")
+                           reason=f"asked after the list closed ({self.last_entry(v, night.isoformat())}) for {v['name']}")
             return res
         self._confirm(c, lead, d, now, res, who, faq_lines)
         return res
@@ -363,19 +405,57 @@ class Engine:
         day = night + timedelta(days=1) if h < 12 else night
         return datetime.combine(day, datetime.min.time(), self.tz) + timedelta(hours=h, minutes=m)
 
-    def last_entry(self, v: dict) -> str:
-        return str(v.get("last_entry") or self.cfg["brand"].get("last_entry", "00:30"))
+    def last_entry(self, v: dict, night: str | None = None) -> str:
+        """When that venue's guestlist closes ("20:00", "01:30"): the night's time from Muse OS, then the venue's
+        time from Muse OS, then config.yaml, then the brand default."""
+        key = next((k for k, x in self.venues.items() if x is v or x.get("name") == v.get("name")), None)
+        own = self.night_closes.get(key or "", {}).get(night or "")
+        return str(own or v.get("list_closes_app") or v.get("list_closes") or v.get("last_entry")
+                   or self.cfg["brand"].get("last_entry", "00:30"))
 
-    def faq_answers(self, p, d: dict | None = None) -> list[str]:
+    def list_open(self, key: str, night: date, now: datetime) -> bool:
+        return now < self.night_time(night, self.last_entry(self.venues[key], night.isoformat()))
+
+    def apply_list_closes(self, by_name: dict[str, str | None], nights: dict[str, dict[str, str | None]]) -> None:
+        """Guestlist closing times from Muse OS: per venue ("20:00") and per night overrides."""
+        keys = {v["name"].lower(): k for k, v in self.venues.items()}
+        for name, k in keys.items():
+            t = by_name.get(name)
+            self.venues[k]["list_closes_app"] = t if t and re.fullmatch(r"\d{1,2}:\d{2}", t) else None
+        self.night_closes = {keys[n]: {d: t for d, t in ns.items() if t and re.fullmatch(r"\d{1,2}:\d{2}", t)}
+                             for n, ns in nights.items() if n in keys}
+
+    def faq_answers(self, p, d: dict | None = None, now: datetime | None = None) -> list[str]:
         faq = self.cfg.get("faq", {})
         v = self.venues.get((d or {}).get("venue") or "", {})
-        link = self.ticket_link(v) or ""
+        if v and (d or {}).get("night"):
+            dress = self.dress_code_for(d["venue"], date.fromisoformat(d["night"]))
+        else:
+            dress = str(v.get("dress_code") if v and not isinstance(v.get("dress_code"), dict) else
+                        "Heels and dresses are recommended, no sneakers or Uggs").rstrip(".")
+        now_ = now or self.now()
+        parts = [(self.night_label(n, now_), " and ".join(self.venues[k]["name"] for k in keys))
+                 for n, keys in self.upcoming_nights(now_)[:4]]
+        week = ", ".join([f"{parts[0][0].capitalize()} we're at {parts[0][1]}"] +
+                         [f"{'and ' if i == len(parts) - 1 else ''}{lbl} {names}" for i, (lbl, names) in
+                          enumerate(parts) if i]) if parts else "We'll have new nights up soon"
+        last = self._clock(self.last_entry(v, (d or {}).get("night"))) if v else self._clock(str(self.cfg["brand"].get("last_entry", "00:30")))
+        link = self.ticket_link(v, (d or {}).get("night")) if v else self.ticket_link({})
         out = []
         keys = [k for k in p.faq if not (k == "table" and "free" in p.faq)]   # "free" already covers the table
+        if v.get("guys_policy") == "cover" and "guys_cost_cover" in faq:
+            keys = ["guys_cost_cover" if k == "guys_cost" else k for k in keys]
+        if not link and "guys_cost_nolink" in faq:
+            keys = ["guys_cost_nolink" if k == "guys_cost" else k for k in keys]
         for key in keys:
             if key in faq:
                 out.append(faq[key].format(ticket_link=link or "we'll send you the link",
-                                           arrive_by=v.get("arrive_by", "before 12")).strip())
+                                           arrive_by=v.get("arrive_by", "after 11 and before 12"),
+                                           at_venue=f" at {v['name']}" if v else "", dress_code=dress, week=week,
+                                           last_entry=last,
+                                           cover=self.cover_note((d or {}).get("venue"), (d or {}).get("night")),
+                                           cover_amount=(c + " ") if (c := self.cover_for((d or {}).get("venue"),
+                                                                    (d or {}).get("night"))) else "").strip())
         return out
 
     def _confirm(self, c, lead, d, now, res: Result, who: str, faq_lines: list[str] | None = None) -> None:
@@ -385,19 +465,23 @@ class Engine:
                   dress_code=self.dress_code_for(d["venue"], night), arrive_by=v["arrive_by"], host=v["host"])
         late = now >= self.night_time(night, str(self.cfg["brand"].get("late_after", "23:30")))
         if late:   # it's already going: tell them to head over now, not "get there after 11"
-            text = self.fmt("confirmation_late", last_entry=self._clock(self.last_entry(v)), **kw)
+            text = self.fmt("confirmation_late", last_entry=self._clock(self.last_entry(v, d["night"])), **kw)
         elif v.get("confirmation_text"):   # edited on the Venues page in Muse OS
             text = self.fmt("confirmation_intro", **kw) + "\n\n" + v["confirmation_text"].replace("[HOST]", v["host"]).replace("[DRESS_CODE]", kw["dress_code"])
         else:
             text = self.fmt("confirmation", **kw)
-        if d.get("guys") and v.get("guys_policy", "ticket") == "ticket":
-            link = self.ticket_link(v)
-            text += "\n" + self.fmt("guys_ticket", ticket_link=link or "we'll send you the link")
+        if d.get("guys") and v.get("guys_policy") == "cover":   # pay at the door, no ticket
+            cover = self.cover_for(d["venue"], d["night"])
+            text += "\n" + (self.fmt("guys_cover", cover=cover) if cover else self.msgs["guys_cover_unknown"])
+        elif d.get("guys") and v.get("guys_policy", "ticket") == "ticket":
+            link = self.ticket_link(self.venues[d["venue"]], d["night"])
+            text += "\n" + self.fmt("guys_ticket", ticket_link=link or "we'll send you the link",
+                                     cover=self.cover_note(d["venue"], d["night"]))
             if not link:
                 res.notify.append(f"🎟️ Send {who} the guys' ticket link for {v['name']}")
         if (d.get("guys") or 0) >= 2 and str(v.get("guys_at_table", "")).lower() == "one":
             text += "\n" + self.fmt("guys_no_table")
-        faq_lines = [f for f in (faq_lines or []) if "ticket" not in f.lower() or not d.get("guys")]
+        faq_lines = [f for f in (faq_lines or []) if not d.get("guys") or not re.search(r"ticket|cover", f.lower())]
         if faq_lines:
             text = "\n".join(faq_lines) + "\n\n" + text
         res.replies.append(Out(text))
@@ -444,7 +528,7 @@ class Engine:
         t = re.sub(r"[^\w' ]", " ", text.lower())
         t = re.sub(r"\b(lol|lmao|haha+|pls|please|plz|rn|now|too|again|ok|okay)\b", " ", t)
         t = re.sub(r"\b(tonight|tomorrow|this|next|on)?\s*(mon|tues|wednes|thurs|fri|satur|sun)day\b|\btonight\b|\btmrw\b|\btomorrow\b|\bweekend\b|\b(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b", " ", t)
-        if re.search(r"\bsomewhere else\b|\b(another|other|different) (club|venue|spot|place|party)\b", t):
+        if re.search(r"\bsomewhere else\b|\b(another|other|different) (club|venue|spot|place)\b", t):
             return "somewhere else"
         m = re.search(r"\b(?:go(?:ing)? to|come to|coming to|doing|at|promoting|promote)\s+((?:the\s+)?[a-z][a-z']*(?:\s+[a-z][a-z']*){0,2})\s*$", t.strip())
         name = m.group(1).strip() if m else None
@@ -492,7 +576,9 @@ class Engine:
             res.replies.append(Out(self.msgs["decline"]))
             res.notify.append(f"❌ {who} cancelled for {v['name']} {night}")
         elif p.faq and not p.wants_human:
-            res.replies.append(Out("\n".join(self.faq_answers(p, {"venue": lead["venue"]}))))
+            # answer, then keep the conversation going: remind her she's already on the list
+            follow = self.fmt("already_confirmed", venue=v["name"], night=self.night_label(night, now), host=v["host"])
+            res.replies.append(Out("\n".join(self.faq_answers(p, {"venue": lead["venue"], "night": lead["night"]}) + [follow])))
         elif p.wants_human or p.is_question:
             res.replies.append(Out(self.fmt("handoff")))
             res.notify.append(f"❓ {who} (confirmed for {v['name']}) asked: \"{text}\"")
@@ -533,6 +619,25 @@ class Engine:
             own = dc.get(WEEKDAYS[night.weekday()]) or dc.get("default") or next(iter(dc.values()), "")
         return str(own or dc).strip().rstrip(".")
 
+    def apply_night_covers(self, by_name: dict[str, dict[str, str | None]]) -> None:
+        """{venue name lowercase: {"2026-11-13": "$40" or None}} from Muse OS venues[].upcoming[].cover."""
+        keys = {v["name"].lower(): k for k, v in self.venues.items()}
+        self.night_cover = {keys[n]: {d: str(c).strip() for d, c in nights.items() if c and str(c).strip()}
+                            for n, nights in by_name.items() if n in keys}
+
+    def cover_for(self, venue_key: str | None, night: str | None) -> str | None:
+        """That night's guys' cover from Muse OS ("$40"), or None."""
+        cover = self.night_cover.get(venue_key or "", {}).get(night or "")
+        if not cover and venue_key and not night:   # no night yet: one cover for all its upcoming nights
+            covers = set(self.night_cover.get(venue_key, {}).values())
+            cover = covers.pop() if len(covers) == 1 else None
+        return cover or None
+
+    def cover_note(self, venue_key: str | None, night: str | None) -> str:
+        """' ($40)' when that night's cover is set in Muse OS, else ''."""
+        cover = self.cover_for(venue_key, night)
+        return f" ({cover})" if cover else ""
+
     def apply_night_dress_codes(self, by_name: dict[str, dict[str, str | None]]) -> None:
         """{venue name lowercase: {"2026-11-13": "All black" or None}} from Muse OS venues[].upcoming[].dress_code."""
         keys = {v["name"].lower(): k for k, v in self.venues.items()}
@@ -551,9 +656,26 @@ class Engine:
         if scouts:
             self.scouts = scouts
 
-    def ticket_link(self, v: dict) -> str:
-        """Muse OS link (updated weekly) wins, then the venue's config link, then the brand-wide one."""
-        return v.get("ticket_link_app") or v.get("ticket_link") or self.cfg["brand"].get("ticket_link") or ""
+    def ticket_link(self, v: dict, night: str | None = None) -> str:
+        """That night's link from Muse OS (each night can have its own, e.g. Nebula Friday vs Saturday), then the
+        venue's weekly link from Muse OS, then the venue's config link, then the brand-wide one."""
+        key = next((k for k, x in self.venues.items() if x is v or x.get("name") == v.get("name")), None)
+        per_night = self.night_links.get(key or "", {}).get(night or "")
+        return (per_night or v.get("ticket_link_app") or v.get("ticket_link")
+                or self.cfg["brand"].get("ticket_link") or "")
+
+    def apply_venue_policies(self, by_name: dict[str, str]) -> None:
+        """Guys' entry chosen on the Venues page in Muse OS (ticket | cover | ask) overrides config.yaml."""
+        for v in self.venues.values():
+            pol = (by_name.get(v["name"].lower()) or "").lower()
+            if pol in ("ticket", "cover", "ask"):
+                v["guys_policy"] = pol
+
+    def apply_night_ticket_links(self, by_name: dict[str, dict[str, str | None]]) -> None:
+        """{venue name lowercase: {"2026-11-13": "https://..." or None}} from Muse OS venues[].upcoming[].ticket_link."""
+        keys = {v["name"].lower(): k for k, v in self.venues.items()}
+        self.night_links = {keys[n]: {d: u.strip() for d, u in nights.items() if u and u.strip()}
+                            for n, nights in by_name.items() if n in keys}
 
     def apply_venue_ticket_links(self, by_name: dict[str, str]) -> None:
         for v in self.venues.values():
@@ -572,15 +694,17 @@ class Engine:
             return []
         self.store.log(now, None, "system", marker)
         missing = []
-        for _, keys in self.upcoming_nights(now):
+        for n, keys in self.upcoming_nights(now):
             for k in keys:
-                name = self.venues[k]["name"]
-                if not self.ticket_link(self.venues[k]) and name not in missing:
-                    missing.append(name)
+                if self.venues[k].get("guys_policy", "ticket") != "ticket":
+                    continue   # cover at the door or no guys: no ticket link needed
+                label = f"{self.venues[k]['name']} {WEEKDAYS[n.weekday()].capitalize()}"
+                if not self.ticket_link(self.venues[k], n.isoformat()) and label not in missing:
+                    missing.append(label)
         if not missing:
             return []
         return [f"🎟️ No guys' ticket link yet this week for {', '.join(missing)}. "
-                f"Add them on the Venues page in Muse OS."]
+                f"Add them on the Weekly setup form in Muse OS."]
 
     def apply_venue_schedule(self, nights_by_name: dict[str, list[str]]) -> None:
         """Muse OS venue nights are the source of truth once any venue has nights filled in."""

@@ -72,3 +72,59 @@ def test_privacy_page():
         r = c.get("/privacy")
         assert r.status_code == 200 and "Privacy Policy" in r.text and "delete my data" in r.text
         assert c.get("/data-deletion").status_code == 200
+
+
+def _expiry_meta(expires_at, valid=True):
+    sent = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        calls.append((req.method, req.url.host, req.url.path))
+        if req.url.path.endswith("/debug_token"):
+            return httpx.Response(200, json={"data": {"is_valid": valid, "expires_at": expires_at}})
+        if req.url.host == "hooks.example":
+            sent.append(json.loads(req.content)["text"])
+        return httpx.Response(200, json={})
+    return h, sent
+
+
+def _run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_facebook_host_token_warns_before_expiry(monkeypatch):
+    import time
+    h, sent = _expiry_meta(int(time.time()) + 5 * 86400)
+    server.http = httpx.AsyncClient(transport=httpx.MockTransport(h))
+    monkeypatch.setattr(server, "NOTIFY_URL", "https://hooks.example/x")
+    server.engine.store.set_setting("graph_base", "https://graph.facebook.com/v23.0")
+    server.engine.store.set_setting("ig_token_checked_on", "")
+    _run(server.refresh_token_if_due())
+    assert any("expires in" in t for t in sent), sent
+    assert not any(p.endswith("refresh_access_token") for m, host, p in calls)
+    sent.clear()
+    _run(server.refresh_token_if_due())          # once a day, not every loop
+    assert not sent
+
+
+def test_facebook_host_token_quiet_when_far_or_never(monkeypatch):
+    import time
+    for exp in (0, int(time.time()) + 50 * 86400):
+        h, sent = _expiry_meta(exp)
+        server.http = httpx.AsyncClient(transport=httpx.MockTransport(h))
+        monkeypatch.setattr(server, "NOTIFY_URL", "https://hooks.example/x")
+        server.engine.store.set_setting("graph_base", "https://graph.facebook.com/v23.0")
+        server.engine.store.set_setting("ig_token_checked_on", "")
+        _run(server.refresh_token_if_due())
+        assert not sent
+
+
+def test_instagram_host_token_is_renewed(monkeypatch):
+    def h(req):
+        calls.append((req.method, req.url.host, req.url.path))
+        return httpx.Response(200, json={"access_token": "newtok", "expires_in": 5184000})
+    server.http = httpx.AsyncClient(transport=httpx.MockTransport(h))
+    server.engine.store.set_setting("graph_base", "https://graph.instagram.com/v23.0")
+    server.engine.store.set_setting("ig_token_refreshed_at", "2026-01-01T00:00:00+00:00")
+    _run(server.refresh_token_if_due())
+    assert server.engine.store.get_setting("ig_token") == "newtok"

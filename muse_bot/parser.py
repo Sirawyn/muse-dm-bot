@@ -29,17 +29,34 @@ HANDOFF = [
     r"hiring", r"\bjob\b", r"work (for|with) (you|muse)", r"be a promoter", r"promoter position",
     r"buy (a |the )?(table|bottle)", r"bottle service", r"(get|book|reserve) a table for (my|our|a) ",
     r"\bminimum\b", r"\bvip section\b", r"collab", r"partnership", r"sponsor",
+    # signs for the table (birthday/bottle signs, sparklers): the team sets these up
+    r"\bsigns?\b(?! up)", r"sparkler", r"\bbanner\b", r"\bneon\b",
 ]
 # Common questions with a fixed answer (answers live in config.yaml under faq:).
 FAQ = {
-    "guys_cost": [r"(cover|ticket|pay|cost|price|free).{0,40}\b(guys?|boys?|men|bf|boyfriend)\b",
-                  r"\b(guys?|boys?|men|bf|boyfriend)\b.{0,40}(cover|ticket|pay|cost|price|free)",
+    "guys_cost": [r"(cover|ticket|pay|cost|price|free|how much).{0,40}\b(guys?|boys?|men|bf|boyfriend)\b",
+                  r"can (my |a |the )?(guy ?friends?|boyfriend|bf|guys?|boys?|brother|husband)( friend)? (come|join)",
+                  r"(guys|boys|men) allowed", r"bring (a |my |some )?(guy|guys|boys?|boyfriend|bf)\b",
+                  r"\b(guys?|boys?|men|bf|boyfriend)\b.{0,40}(cover|ticket|pay|cost|price|free|how much)",
                   r"how much (would|are|is|do) (the )?tickets?", r"tickets? cost"],
     "free": [r"(have|need) to pay", r"\bfree\b.{0,15}\?|\bis it free\b|\bfree entry\b|\bfor free\b",
              r"how much", r"\bcost\b", r"\bprice\b", r"\bcover\b"],
     "table": [r"\btables?\b", r"\bdrinks?\b", r"\bbottles?\b"],
     "timing": [r"what time", r"(how )?late(st)? (can|should|do)", r"\bearliest\b", r"until when",
-               r"when should (we|i)", r"time should (we|i)"],
+               r"when should (we|i)", r"time should (we|i)", r"good time", r"(would|is) (\d{1,2}|midnight)\S* (be )?(ok|okay|good|fine)",
+               r"arrive (between|by|at|around)", r"when (do|does) (it|the list|guestlist|entry) close", r"list clos"],
+    "schedule": [r"where (will|are|r) (you|u|y'?all)", r"which (club|venue|place|spot)", r"what (club|venue|clubs|venues)",
+                 r"where (is|are) (it|the event|the party|you guys)", r"anything (for )?(today|tonight|tn|this week)",
+                 r"what('?s| is) (on|the plan|happening)", r"where('?s| is) (it|the party)"],
+    "bring_friends": [r"can (i|we) (bring|invite|add) (a |my |some )?(friend|girl|bestie|sister|roommate|plus|\+)",
+                      r"can my (friend|friends|girl ?friends?|bestie|sister|roommate)s? (come|join)",
+                      r"bring (more|other|extra) (girls|friends)"],
+    "dress_code": [r"dress ?code", r"what (should|do) (we|i) wear", r"(can|could) (i|we) wear", r"\bsneakers?\b\?",
+                   r"what to wear", r"\boutfits?\b.*\?"],
+    "age": [r"\b(is it|is this|is the event|is the club)\s*(1[89]|21)\s*(\+|plus|and over)?", r"\bage (limit|requirement)",
+            r"how old"],
+    "how_it_works": [r"how (does|do) (this|it) work", r"what do (i|we) (do|say) at the door", r"show (them|this|the bouncer)",
+                     r"do (i|we) (need|have) to (sign up|register|rsvp|fill)", r"how do (i|we) get (in|on)"],
 }
 DECLINE = [
     r"not this (weekend|wknd|week|time|saturday|friday|thursday|sat|fri)", r"can'?t (make it|this|tonight|come|go)",
@@ -250,7 +267,7 @@ def parse_age(t: str, expecting: str | None = None) -> bool | None:
     if expecting == "age":
         if YES.match(t):
             return True
-        if NO.match(t):
+        if NO.match(t) and not re.search(rf"\b{GUYS}\b|\bjust (us )?girls\b", t):   # "no guys" isn't "no, not 21"
             return False
     return None
 

@@ -58,3 +58,40 @@ def test_e2e(client, con):
     sync_all(eng, s)
     b = con.execute("SELECT status, girls_arrived, thank_you_sent FROM bookings WHERE id='BK-DM-00001'").fetchone()
     assert tuple(b) == ("Arrived", 3, 1)
+
+
+def test_weekly_fields_reach_the_bot(client, con):
+    """Per-night ticket link, cover, dress code and the venue's Guys' entry, set in Muse OS, show up in replies."""
+    key = auth.create_api_key(con, "DM bot")
+    con.execute("INSERT INTO nights(night, venue, host, dress_code, cover, ticket_link, updated_at) "
+                "SELECT '2026-11-14', name, NULL, 'All black', '$50', 'https://tix.example/sat', '' FROM venues "
+                "WHERE name='Nebula' ON CONFLICT(night, venue) DO UPDATE SET dress_code='All black', cover='$50', "
+                "ticket_link='https://tix.example/sat'")
+    con.commit()
+    s = MuseOSSync("", key, session=client)
+    eng = Engine(load_config("/mnt/project-files/muse-dm-bot/config.yaml"), Store(":memory:"))
+    eng.apply_night_hosts(s.venue_hosts())
+    eng.apply_night_dress_codes(s.venue_dress_codes())
+    eng.apply_night_covers(s.venue_covers())
+    eng.apply_night_ticket_links(s.venue_night_links())
+    eng.apply_venue_policies(s.venue_policies())
+    t = eng.handle_message("333", "nebula saturday, 3 girls 1 guy, all 21", now=FRI, username="kim").replies[0].text
+    assert "All black" in t and "($50)" in t and "https://tix.example/sat" in t, t
+
+
+def test_list_closes_reach_the_bot(client, con):
+    """Guestlist closing time per venue and per night, set in Muse OS, is what the bot quotes."""
+    key = auth.create_api_key(con, "DM bot")
+    con.execute("UPDATE venues SET list_closes='01:00' WHERE name='Nebula'")
+    con.execute("INSERT INTO nights(night, venue, host, list_closes, updated_at) "
+                "SELECT '2026-11-14', name, NULL, '00:45', '' FROM venues WHERE name='Nebula' "
+                "ON CONFLICT(night, venue) DO UPDATE SET list_closes='00:45'")
+    con.commit()
+    s = MuseOSSync("", key, session=client)
+    by_venue, by_night = s.list_closes()
+    assert by_venue["nebula"] == "01:00" and by_night["nebula"]["2026-11-14"] == "00:45"
+    eng = Engine(load_config("/mnt/project-files/muse-dm-bot/config.yaml"), Store(":memory:"))
+    eng.apply_list_closes(by_venue, by_night)
+    t = " ".join(r.text for r in eng.handle_message("444", "what time does the list close for nebula saturday", now=FRI,
+                                                    username="ana").replies)
+    assert "12:45" in t, t
