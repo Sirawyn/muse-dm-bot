@@ -171,7 +171,8 @@ def test_weekly_ticket_links_from_muse_os_and_monday_check(eng):
     mon_noon = datetime(2026, 11, 16, 12, 5, tzinfo=TZ)
     assert eng.weekly_ticket_check(mon_9am) == []            # too early
     alert = eng.weekly_ticket_check(mon_noon)
-    assert alert and "NOFLEX" in alert[0]
+    assert alert and "Public Hotel" in alert[0] and "NOFLEX" not in alert[0]   # NOFLEX is cover only
+    assert "No cover price yet" in alert[1] and "NOFLEX Thursday" in alert[1]
     assert eng.weekly_ticket_check(mon_noon) == []           # only once per Monday
     eng.apply_venue_ticket_links({"public hotel": "https://tix.example/public-wk47"})
     r = chat(eng, "public thursday, 3 girls 1 guy, all 21+", mon_noon)
@@ -384,7 +385,9 @@ def test_answers_directly_using_what_she_asked(eng):
     assert t.startswith("Hi! Yes, girls get in free and you get a table with drinks at Nebula!")
     assert "We're at Nebula Thursday, Friday or Saturday, which night works for you?" in t
     t = chat(eng, "how much is it for guys at noflex", TUE_730, user="q2").replies[0].text
-    assert "uys just need to grab a ticket" in t and "free" not in t.lower()
+    assert "uys just pay cover at the door" in t and "free" not in t.lower()   # NOFLEX: cover, no tickets
+    t = chat(eng, "how much is it for guys at public hotel", TUE_730, user="q2b").replies[0].text
+    assert "uys just need to grab a ticket" in t
 
 
 def test_weekly_cover_from_muse_os(eng):
@@ -392,7 +395,7 @@ def test_weekly_cover_from_muse_os(eng):
     t = chat(eng, "3 girls 1 guy nebula friday all 21", TUE_730, user="c1").replies[0].text
     assert "guys just need to grab a ticket ($40):" in t
     t = chat(eng, "2 girls 1 guy noflex friday all 21", TUE_730, user="c2").replies[0].text
-    assert "guys just need to grab a ticket:" in t
+    assert "guys just pay cover at the door" in t and "ticket:" not in t and "link" not in t   # no price typed in yet
     t = chat(eng, "how much is it for guys at nebula saturday", TUE_730, user="c3").replies[0].text
     assert "($50)" in t
 
@@ -569,3 +572,17 @@ def test_yes_to_guys_question_still_asks_age(eng):
         chat(eng, m, now, user="ya1")
     r = chat(eng, "yes 2 guys", now, user="ya1")
     assert "21+" in r.replies[0].text, r.replies[0].text
+
+
+def test_noflex_cover_price_from_weekly_setup(eng):
+    """NOFLEX has no tickets: the bot quotes the cover price typed into Weekly setup, never a ticket link."""
+    eng.apply_night_covers({"noflex": {"2026-11-12": "$20", "2026-11-13": "$25"}})
+    t = chat(eng, "2 girls 1 guy noflex friday all 21", TUE_730, user="nf1").replies[0].text
+    assert "guys just pay a $25 cover at the door" in t and "ticket link" not in t.lower(), t
+    t = chat(eng, "how much is it for guys at noflex thursday", TUE_730, user="nf2").replies[0].text
+    assert "$20 cover at the door" in t, t
+    eng.apply_night_covers({"noflex": {"2026-11-12": "$20", "2026-11-13": "$20"}})
+    t = chat(eng, "how much is cover for guys at noflex", TUE_730, user="nf3").replies[0].text
+    assert "$20 cover at the door" in t, t
+    eng.apply_night_covers({"noflex": {"2026-11-19": "$20", "2026-11-20": "$20"}})   # next week filled in Sunday
+    assert not any("NOFLEX" in a for a in eng.weekly_ticket_check(datetime(2026, 11, 16, 12, 5, tzinfo=TZ)))

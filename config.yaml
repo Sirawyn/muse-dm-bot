@@ -24,7 +24,8 @@ brand:
   last_entry: "00:30"          # default guestlist closing time; set list_closes per venue (Nebula 01:30)
   # Each night at this time the team channel gets every venue's list for tonight, under that night's host.
   digest_time: "21:00"
-  # Monday at this hour the team gets an alert listing venues running this week with no ticket link.
+  # Monday at this hour the team gets an alert listing venues running this week with no ticket link
+  # (or, for cover-only venues like NOFLEX, no cover price).
   ticket_check_hour: 12
 
 # Which venues Muse is running each night of the week. Nebula ran Fri/Sat in 9 of the last 10 months.
@@ -78,7 +79,7 @@ venues:
     host: Devin                 # TODO: confirm host
     arrive_by: at 11
     dress_code: Heels and dresses are recommended, no sneakers or Uggs
-    guys_policy: ticket
+    guys_policy: cover        # no tickets: guys pay cover at the door, amount typed each Sunday in Weekly setup
     guys_at_table: one        # 2+ guys can't sit at the table (girls can bring them drinks); a single guy can
   den_social:
     name: Den Social

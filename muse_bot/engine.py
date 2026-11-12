@@ -756,18 +756,28 @@ class Engine:
         if self.store.db.execute("SELECT 1 FROM events WHERE direction='system' AND text=?", (marker,)).fetchone():
             return []
         self.store.log(now, None, "system", marker)
-        missing = []
+        missing, no_cover = [], []
         for n, keys in self.upcoming_nights(now):
             for k in keys:
-                if self.policy_for(k, n.isoformat(), "ticket") != "ticket" or self.guys_free(k, n.isoformat()):
-                    continue   # cover at the door or no guys: no ticket link needed
                 label = f"{self.venues[k]['name']} {WEEKDAYS[n.weekday()].capitalize()}"
+                if self.guys_free(k, n.isoformat()):
+                    continue   # no guys or free entry: nothing to send
+                if self.policy_for(k, n.isoformat(), "ticket") == "cover":
+                    if not self.cover_for(k, n.isoformat()) and label not in no_cover:
+                        no_cover.append(label)   # cover-only venue (NOFLEX) with no price typed in yet
+                    continue
+                if self.policy_for(k, n.isoformat(), "ticket") != "ticket":
+                    continue
                 if not self.ticket_link(self.venues[k], n.isoformat()) and label not in missing:
                     missing.append(label)
-        if not missing:
-            return []
-        return [f"🎟️ No guys' ticket link yet this week for {', '.join(missing)}. "
-                f"Add them on the Weekly setup form in Muse OS."]
+        out = []
+        if missing:
+            out.append(f"🎟️ No guys' ticket link yet this week for {', '.join(missing)}. "
+                       f"Add them on the Weekly setup form in Muse OS.")
+        if no_cover:
+            out.append(f"💵 No cover price yet this week for {', '.join(no_cover)}. "
+                       f"Type it in \"Cover this night\" on the Weekly setup form in Muse OS.")
+        return out
 
     def apply_venue_schedule(self, nights_by_name: dict[str, list[str]]) -> None:
         """Muse OS venue nights are the source of truth once any venue has nights filled in."""
