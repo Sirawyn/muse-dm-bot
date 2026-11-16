@@ -128,21 +128,79 @@ class Parsed:
     text: str = ""
 
 
+MONTHS = {"jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3, "apr": 4, "april": 4,
+          "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7, "aug": 8, "august": 8, "sep": 9, "sept": 9,
+          "september": 9, "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12}
+_MONTH = "|".join(sorted(MONTHS, key=len, reverse=True))
+_ORD = r"(?:st|nd|rd|th)"
+
+
+def _weekday_index(word: str) -> int | None:
+    for i, name in enumerate(WEEKDAYS):
+        if word in (name, name + "s"):
+            return i
+    return WEEKDAY_ALIASES.get(word)
+
+
+def _upcoming(base: date, month: int, day: int) -> date | None:
+    """The next time that calendar date comes round (today counts)."""
+    for year in (base.year, base.year + 1):
+        try:
+            d = date(year, month, day)
+        except ValueError:
+            return None
+        if d >= base:
+            return d
+    return None
+
+
+def parse_date(t: str, base: date) -> date | None:
+    """Calendar dates: "nov 20th", "november 20", "20th of november", "11/20", "the 21st"."""
+    m = re.search(rf"\b({_MONTH})\.?\s*(\d{{1,2}}){_ORD}?\b", t)
+    if m and not (m.group(1) == "may" and not re.search(rf"\bmay\.?\s*\d{{1,2}}{_ORD}?\b(?!\s*(of us|girls|people|ppl))", t)):
+        return _upcoming(base, MONTHS[m.group(1)], int(m.group(2)))
+    m = re.search(rf"\b(\d{{1,2}}){_ORD}?\s*(?:of\s+)?({_MONTH})\b", t)
+    if m:
+        return _upcoming(base, MONTHS[m.group(2)], int(m.group(1)))
+    m = re.search(r"(?<![\d/])(1[0-2]|0?[1-9])/(3[01]|[12]\d|0?[1-9])(?:/(?:\d{2}|\d{4}))?(?![\d/])", t)
+    if m:
+        return _upcoming(base, int(m.group(1)), int(m.group(2)))
+    m = re.search(rf"\b(?:the\s+)?(3[01]|[12]\d|0?[1-9]){_ORD}\b", t)
+    if m:
+        day = int(m.group(1))
+        for k in range(3):   # this month, else the next month that has that day
+            y, mo = base.year + (base.month - 1 + k) // 12, (base.month - 1 + k) % 12 + 1
+            try:
+                d = date(y, mo, day)
+            except ValueError:
+                continue
+            if d >= base:
+                return d
+    return None
+
+
 def parse_night(t: str, now: datetime) -> date | None:
     base = night_for(now)
+    # An explicit date wins over everything else ("next friday, november 20th").
+    d = parse_date(t, base)
+    if d:
+        return d
     if re.search(r"\b(tonight|tn|tonite|today|rn|right now|tnite)\b", t):
         return base
     if re.search(r"\b(tomorrow|tmrw|tmr|tomorow|tmw)\b", t):
         return base + timedelta(days=1)
-    for word in re.findall(r"[a-z]+", t):
-        idx = None
-        for i, name in enumerate(WEEKDAYS):
-            if word in (name, name + "s"):
-                idx = i
-        if idx is None and word in WEEKDAY_ALIASES:
-            idx = WEEKDAY_ALIASES[word]
-        if idx is not None:
-            return base + timedelta(days=(idx - base.weekday()) % 7)
+    words = re.findall(r"[a-z]+", t)
+    for i, word in enumerate(words):
+        idx = _weekday_index(word)
+        if idx is None:
+            continue
+        prev = words[i - 1] if i else ""
+        after = " ".join(words[i + 1:i + 3])
+        if prev == "next" or after == "next week" or re.search(rf"\bnext week'?s? {word}\b", t):
+            # "next friday" / "friday next week": that weekday in next calendar week, never tonight
+            next_monday = base + timedelta(days=7 - base.weekday())
+            return next_monday + timedelta(days=idx)
+        return base + timedelta(days=(idx - base.weekday()) % 7)
     return None
 
 

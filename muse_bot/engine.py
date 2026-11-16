@@ -9,6 +9,7 @@ goes to a human, and the bot goes quiet in any chat where a promoter has typed b
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -88,6 +89,9 @@ class Engine:
             return "tonight"
         if night == base + timedelta(days=1):
             return "tomorrow"
+        if (night - base).days >= 7 or night < base:
+            # a week or more out: "Friday" alone would read as this Friday, so name the date
+            return f"{WEEKDAYS[night.weekday()].capitalize()} {night.strftime('%b')} {night.day}"
         return WEEKDAYS[night.weekday()].capitalize()
 
     def upcoming_nights(self, now: datetime) -> list[tuple[date, list[str]]]:
@@ -139,8 +143,19 @@ class Engine:
         p = parse(text, now, self.venues, c.get("expecting"))
 
         # A new night mentioned after a finished/confirmed one starts a fresh request.
+        moved_note = None
         if lead and lead["status"] in ("confirmed", "arrived") and p.night \
                 and lead["night"] and p.night.isoformat() != lead["night"]:
+            if lead["status"] == "confirmed" and date.fromisoformat(lead["night"]) >= night_for(now) \
+                    and not p.arrived:
+                # She's changing nights, not adding one: drop the old booking so it never turns into a
+                # no-show and a "we missed you" the next day.
+                self.store.update_lead(lead["id"], status="cancelled",
+                                       notes=f"moved to {p.night.isoformat()} by guest")
+                self.store.dirty.add(lead["id"])
+                old_v = self.venues.get(lead["venue"], {}).get("name", lead["venue"])
+                moved_note = (f"🔁 {who} moved from {old_v} {lead['night']} to {p.night.isoformat()}; "
+                              f"old booking cancelled")
             lead = None
         if not self._lead_is_live(lead, now):
             if p.pleasantry:
@@ -191,6 +206,8 @@ class Engine:
 
         if scout_note:
             res.notify.append(scout_note)
+        if moved_note:
+            res.notify.insert(0, moved_note)
         if res.replies and not lead.get("first_reply_at"):
             self._mark_first_reply(lead, now)
         for r in res.replies:
@@ -253,9 +270,11 @@ class Engine:
         if max(d.get("party_size") or 0, d.get("guys") or 0) > big:
             self._to_human(c, lead, d, "big_group", res, who, reason=f"group of {max(d.get('party_size') or 0, d.get('guys') or 0)}, too big for the bot")
             return res
+        if (d.get("night") or d.get("venue")) and "schedule" in p.faq:
+            # the next question already names the options; the week's lineup would only confuse a guest who
+            # asked about a specific night (e.g. "Nov 20th" answered with tonight's spots)
+            p = dataclasses.replace(p, faq=[k for k in p.faq if k != "schedule"])
         faq_lines = self.faq_answers(p, d, now)
-        if d.get("night") or d.get("venue"):   # the next question already names the options
-            faq_lines = [f for f in faq_lines if not f.startswith(self.cfg.get("faq", {}).get("schedule", "~")[:12])]
 
         night = date.fromisoformat(d["night"]) if d.get("night") else None
         questions: list[str] = []
