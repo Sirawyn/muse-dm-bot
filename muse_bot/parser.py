@@ -32,6 +32,13 @@ HANDOFF = [
     # signs for the table (birthday/bottle signs, sparklers): the team sets these up
     r"\bsigns?\b(?! up)", r"sparkler", r"\bbanner\b", r"\bneon\b",
 ]
+# "Not sure" as the whole answer to a question (no number in it).
+UNSURE_ANSWER = re.compile(
+    r"^\W*(i'?m |im |we'?re |were )?(not sure|unsure|idk|i don'?t know|don'?t know|dont know|no idea|tbd|"
+    r"not certain|maybe|possibly|might|we'?ll see|probably not|prob not|hmm+|unclear|depends)"
+    r"( yet| tbh| lol| atm| rn| right now| honestly| actually)*\W*$")
+UNSURE_GUYS = [r"(not sure|unsure|don'?t know|dont know|idk|no idea|tbd).{0,25}(guys?|boys?|men|dudes?)\b",
+               r"(guys?|boys?)\b.{0,25}(not sure|unsure|tbd|idk|don'?t know|dont know|no idea)"]
 # She doesn't know her group size yet: the team follows up instead of the bot pushing for a number.
 UNSURE_COUNT = [
     r"(not sure|unsure|don'?t know|dont know|idk|no idea|not certain|unclear|tbd).{0,25}how many",
@@ -119,6 +126,7 @@ class Parsed:
     over21: bool | None = None        # True = confirmed, False = someone under 21 / no physical ID
     wants_human: bool = False
     unsure_count: bool = False
+    unsure_guys: bool = False         # "not sure" about guys: don't ask again, confirm the girls
     faq: list[str] = field(default_factory=list)
     declined: bool = False
     arrived: bool = False             # here, in line, or on the way
@@ -288,9 +296,11 @@ def parse_counts(text: str, expecting: str | None = None) -> tuple[int | None, i
     if expecting == "party_size" and party is None and re.fullmatch(r"\d{1,2}", stripped):
         party = int(stripped)
     if expecting in ("guys", "guys_count") and guys is None:
-        if re.fullmatch(r"\d{1,2}", stripped):
-            guys = int(stripped)
-        elif expecting == "guys" and NO.match(stripped):
+        m = re.fullmatch(r"(?:maybe|probably|prob|like|around|about|max|up to|possibly|prolly|i think|"
+                         r"at most)?\s*(\d{1,2})(?: guys?| boys?| of them| max)?(?: maybe| probably| max| tops)?", stripped)
+        if m:
+            guys = int(m.group(1))
+        elif expecting == "guys" and NO.match(stripped) and not UNSURE_ANSWER.match(t):
             guys = 0
         elif expecting == "guys" and YES.match(stripped):
             yes_no_count = True
@@ -345,6 +355,9 @@ def parse(text: str, now: datetime, venues: dict, expecting: str | None = None) 
     p.party_size, p.guys, p.guys_yes_no_count = parse_counts(text, expecting)
     p.over21 = parse_age(t, expecting)
     p.unsure_count = _any(UNSURE_COUNT, t)
+    if p.guys is None and not re.search(r"\d", t) and (
+            (expecting in ("guys", "guys_count") and UNSURE_ANSWER.match(t)) or _any(UNSURE_GUYS, t)):
+        p.unsure_guys, p.unsure_count, p.guys_yes_no_count = True, False, False
     p.wants_human = _any(HANDOFF, t) or p.unsure_count
     p.faq = [k for k, pats in FAQ.items() if _any(pats, t)]
     if "guys_cost" in p.faq and "free" in p.faq:

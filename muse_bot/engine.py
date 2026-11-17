@@ -204,6 +204,20 @@ class Engine:
         else:
             res = self._qualify(c, lead, p, now, who)
 
+        # Safety net: never send her the exact message the bot just sent. If the bot would repeat itself,
+        # it didn't understand her answer, so a person takes over instead. (A repeat is fine when her message
+        # was understood, e.g. "no guys" answered while the bot was asking about age.)
+        if res.replies and lead.get("status") not in ("confirmed", "arrived") \
+                and self.store.lead(lead["id"])["status"] == "qualifying":
+            prev = self.store.db.execute(
+                "SELECT text FROM events WHERE ig_user_id=? AND direction='out' ORDER BY id DESC LIMIT 1",
+                (ig_user_id,)).fetchone()
+            understood = bool(p.night or p.venue or p.party_size or p.guys is not None or p.over21 is not None
+                              or p.faq or p.unsure_guys or p.guys_yes_no_count)
+            if prev and not understood and any(r.text.strip() == (prev["text"] or "").strip() for r in res.replies):
+                res = Result()
+                self._to_human(c, lead, c["draft"], "handoff", res, who,
+                               reason=f"bot didn't understand her answer: \"{text}\"")
         if scout_note:
             res.notify.append(scout_note)
         if moved_note:
@@ -234,6 +248,13 @@ class Engine:
         if p.guys is not None:
             d["guys"] = p.guys
             d.pop("guys_unknown", None)
+            d.pop("guys_tbd", None)
+        elif p.unsure_guys:
+            # She doesn't know about guys yet: never ask the same question again. Book the girls now and
+            # tell her to text us if guys end up coming.
+            d["guys"] = 0
+            d["guys_tbd"] = True
+            d.pop("guys_unknown", None)
         elif p.guys_yes_no_count:
             d["guys_unknown"] = True
         over21 = p.over21
@@ -243,7 +264,7 @@ class Engine:
         if over21 is not None:
             d["over21"] = over21
 
-        if p.unsure_count or (c.get("expecting") in ("party_size", "guys_count") and not p.party_size and re.match(
+        if p.unsure_count or (c.get("expecting") == "party_size" and not p.party_size and re.match(
                 r"^\W*(i'?m |im )?(not sure|unsure|idk|i don'?t know|dont know|no idea|tbd|not certain)( yet)?( tbh| lol)?\W*$",
                 p.text.strip().lower())):
             self._to_human(c, lead, d, "handoff_unsure_count", res, who, reason="not sure how many are coming yet")
@@ -275,6 +296,10 @@ class Engine:
             # asked about a specific night (e.g. "Nov 20th" answered with tonight's spots)
             p = dataclasses.replace(p, faq=[k for k in p.faq if k != "schedule"])
         faq_lines = self.faq_answers(p, d, now)
+        tbd_lines: list[str] = []
+        if p.unsure_guys:
+            tbd_lines = self.guys_tbd_lines(d, now)
+            faq_lines = [f for f in faq_lines if not re.search(r"ticket|cover", f.lower())]
 
         night = date.fromisoformat(d["night"]) if d.get("night") else None
         questions: list[str] = []
@@ -402,6 +427,8 @@ class Engine:
         elif progressed:
             d.pop("stalls", None)
         if questions:
+            if tbd_lines:   # "no worries" + what guys need, as its own message (like the team sends it)
+                res.replies.append(Out("\n".join(tbd_lines)))
             text = " ".join(q[:1].upper() + q[1:] for q in faq_lines + questions)   # one paragraph, reads like a person
             if first_touch:
                 returning = len(self.store.leads("ig_user_id=?", (lead["ig_user_id"],))) > 1
@@ -437,7 +464,7 @@ class Engine:
             self._to_human(c, lead, d, "late_check", res, who,
                            reason=f"asked after the list closed ({self.last_entry(v, night.isoformat())}) for {v['name']}")
             return res
-        self._confirm(c, lead, d, now, res, who, faq_lines)
+        self._confirm(c, lead, d, now, res, who, tbd_lines + faq_lines)
         return res
 
     def night_time(self, night: date, hhmm: str) -> datetime:
@@ -534,7 +561,7 @@ class Engine:
                                party_size=d["party_size"], guys=d.get("guys"))
         c.update(stage="confirmed", expecting=None)
         res.notify.append(f"{'⏰ Late add, on the way now' if late else '✅ Confirmed'} {who}: "
-                          f"{d['party_size']} ({d.get('guys') or 0} guys) for "
+                          f"{d['party_size']} ({'guys TBD' if d.get('guys_tbd') else str(d.get('guys') or 0) + ' guys'}) for "
                           f"{v['name']} {WEEKDAYS[night.weekday()].capitalize()} {night}. Host: {v['host']}")
 
     @staticmethod
@@ -591,6 +618,29 @@ class Engine:
             return None
         return name.title()
 
+    def guys_tbd_lines(self, d: dict, now: datetime) -> list[str]:
+        """She's not sure about guys yet: "no worries", then what guys need at that venue, like the team says it."""
+        lines = [self.msgs["guys_tbd_ack"]]
+        key, night = d.get("venue"), d.get("night")
+        if not key:
+            return lines
+        v = self.venues[key]
+        label = self.night_label(date.fromisoformat(night), now) if night else "that night"
+        if self.guys_free(key, night):
+            lines.append(self.msgs["guys_free"])
+        elif self.policy_for(key, night) == "cover":
+            cover = self.cover_for(key, night)
+            lines.append(self.fmt("guys_cover", cover=cover) if cover else self.msgs["guys_cover_unknown"])
+        elif self.policy_for(key, night, "ticket") == "ticket":
+            link = self.ticket_link(v, night)
+            lines.append(self.fmt("guys_tbd_ticket" if link else "guys_tbd_ticket_nolink", ticket_link=link or "",
+                                  cover=self.cover_note(key, night), night=label))
+        else:   # ask / ratio / girls-only doors: the team checks first
+            lines.append(self.msgs["guys_tbd_check"])
+        if str(v.get("guys_at_table", "")).lower() == "one":
+            lines.append(self.msgs["guys_tbd_one_at_table"])
+        return lines
+
     def _to_human(self, c, lead, d, msg_key, res: Result, who: str, reason: str) -> None:
         v = self.venues.get(d.get("venue") or "", {})
         if msg_key:   # None = hand over without the bot saying anything
@@ -625,6 +675,19 @@ class Engine:
             # answer, then keep the conversation going: remind her she's already on the list
             follow = self.fmt("already_confirmed", venue=v["name"], night=self.night_label(night, now), host=v["host"])
             res.replies.append(Out("\n".join(self.faq_answers(p, {"venue": lead["venue"], "night": lead["night"]}) + [follow])))
+        elif c.get("draft", {}).get("guys_tbd") and lead["status"] == "confirmed" and p.guys is not None \
+                and not p.is_question:
+            # she was "not sure" about guys and is telling us now
+            c["draft"].pop("guys_tbd", None)
+            c["draft"]["guys"] = p.guys
+            self.store.update_lead(lead["id"], guys=p.guys)
+            if p.guys == 0:
+                res.replies.append(Out(self.msgs["guys_tbd_none"]))
+            else:
+                d = {"venue": lead["venue"], "night": lead["night"]}
+                info = [l for l in self.guys_tbd_lines(d, now)[1:]]
+                res.replies.append(Out("Got it! " + " ".join(info) if info else "Got it!"))
+                res.notify.append(f"🧍 {who} is bringing {p.guys} guy{'s' if p.guys != 1 else ''} to {v['name']} {night}")
         elif p.wants_human or p.is_question:
             res.replies.append(Out(self.fmt("handoff")))
             res.notify.append(f"❓ {who} (confirmed for {v['name']}) asked: \"{text}\"")
