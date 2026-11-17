@@ -219,7 +219,7 @@ class Engine:
                               or p.faq or p.unsure_guys or p.guys_yes_no_count)
             if prev and not understood and any(r.text.strip() == (prev["text"] or "").strip() for r in res.replies):
                 res = Result()
-                self._to_human(c, lead, c["draft"], "handoff", res, who,
+                self._to_human(c, lead, c["draft"], None, res, who,   # silent: never guess
                                reason=f"bot didn't understand her answer: \"{text}\"")
         res.react = p.thanks   # she said thank you: like her message, whatever else the bot says
         if scout_note:
@@ -425,15 +425,16 @@ class Engine:
                                   r"spot|room|space|free|table|interested|down)\b", p.text.lower())
         if questions and not progressed and not faq_lines and p.is_question and not asks_for_spot:
             # a question the bot can't answer: don't dodge it with "which night?", get a person
-            self._to_human(c, lead, d, "handoff", res, who, reason=f"question the bot can't answer: \"{p.text}\"")
+            # Father's rule: if Thalia doesn't know how to respond, stay silent rather than say the wrong thing
+            self._to_human(c, lead, d, None, res, who, reason=f"question the bot can't answer: \"{p.text}\"")
+            return res
+        if questions and not first_touch and not progressed and not faq_lines and p.pleasantry:
+            c["expecting"] = expecting   # "ok", "lol", "ty": nothing to answer, wait for her real reply
             return res
         if questions and not first_touch and not progressed and not faq_lines:
-            # her reply didn't answer anything: never paste the same block again
-            d["stalls"] = d.get("stalls", 0) + 1
-            if d["stalls"] >= 2:
-                self._to_human(c, lead, d, "handoff", res, who, reason=f"bot didn't understand: \"{p.text}\"")
-                return res
-            questions = questions[:1]
+            # her reply didn't answer anything: stay silent and let a person take it (never guess or re-ask)
+            self._to_human(c, lead, d, None, res, who, reason=f"bot didn't understand: \"{p.text}\"")
+            return res
         elif progressed:
             d.pop("stalls", None)
         if questions:
@@ -455,13 +456,13 @@ class Engine:
         v = self.venues[d["venue"]]
         guys, party = d["guys"], d["party_size"]
         if guys >= party:
-            self._to_human(c, lead, d, "handoff", res, who,
+            self._to_human(c, lead, d, None, res, who,
                            reason=f"group of {party} with {guys} guys, numbers need a human look")
             return res
         girls = party - guys
         scheduled = self.venues_on(night)
         if scheduled and d["venue"] not in scheduled:
-            self._to_human(c, lead, d, "handoff", res, who,
+            self._to_human(c, lead, d, None, res, who,
                            reason=f"asked for {v['name']} on a night it's not on the schedule")
             return res
         policy = self.policy_for(d["venue"], d.get("night"), "ok")
@@ -735,7 +736,7 @@ class Engine:
                         lead["venue"], lead["night"]) and not self.ticket_link(self.venues[lead["venue"]], lead["night"]):
                     res.notify.append(f"🎟️ Send {who} the guys' ticket link for {v['name']}")
         elif p.wants_human or p.is_question:
-            res.replies.append(Out(self.fmt("handoff")))
+            pass   # a question she can't answer after confirming: stay silent, the team replies
             res.notify.append(f"❓ {who} (confirmed for {v['name']}) asked: \"{text}\"")
         elif lead["status"] == "confirmed" and (p.venue or p.party_size or p.night):
             res.replies.append(Out(self.fmt("already_confirmed", venue=v["name"],
