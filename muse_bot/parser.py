@@ -126,6 +126,7 @@ class Parsed:
     over21: bool | None = None        # True = confirmed, False = someone under 21 / no physical ID
     wants_human: bool = False
     unsure_count: bool = False
+    thanks: bool = False              # "thank you", "ty", "tysm": the bot likes her message
     unsure_guys: bool = False         # "not sure" about guys: don't ask again, confirm the girls
     faq: list[str] = field(default_factory=list)
     declined: bool = False
@@ -366,6 +367,7 @@ def parse(text: str, now: datetime, venues: dict, expecting: str | None = None) 
     p.arrived = _any(ARRIVAL, t)
     p.on_the_way = p.arrived and _any(ON_THE_WAY, t)
     p.text = t
+    p.thanks = bool(re.search(r"\b(thank(s|x|u|ss+)?|thnx|thx|ty+|tysm+|tyvm|appreciate (it|you|u|that))\b", t))
     p.pleasantry = (len(t) < 70 and "?" not in t and not (p.night or p.venue or p.party_size) and bool(re.match(
         r"^\W*(ok+|okay|oki+|kk|ty+|thank|tysm|thx|sounds good|sg+|bet|perfect|yay+|amazing|love (it|that|you)|"
         r"will do|no worries|np|got it|gotcha|noted|cute|omg|haha|lol|\W*$)", t)))

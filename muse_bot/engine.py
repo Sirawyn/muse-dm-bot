@@ -36,6 +36,7 @@ class Out:
 class Result:
     replies: list[Out] = field(default_factory=list)
     notify: list[str] = field(default_factory=list)   # alerts for the team (hosts / admin)
+    react: bool = False   # like (heart) her message, e.g. when she says thank you
 
 
 def load_config(path: str = "config.yaml") -> dict:
@@ -160,6 +161,7 @@ class Engine:
         if not self._lead_is_live(lead, now):
             if p.pleasantry:
                 self.store.save_convo(c)
+                res.react = p.thanks   # "ty!!" after a night: a heart, no words
                 return res   # "ty!!", "sounds good" after a night or a decline: nothing to answer
             lead = self.store.lead(self.store.new_lead(ig_user_id, c.get("username"), msg_time))
             c.update(stage="qualifying", expecting=None, lead_id=lead["id"], draft={})
@@ -218,6 +220,7 @@ class Engine:
                 res = Result()
                 self._to_human(c, lead, c["draft"], "handoff", res, who,
                                reason=f"bot didn't understand her answer: \"{text}\"")
+        res.react = p.thanks   # she said thank you: like her message, whatever else the bot says
         if scout_note:
             res.notify.append(scout_note)
         if moved_note:

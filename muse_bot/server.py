@@ -194,6 +194,17 @@ async def send(ig_user_id: str, out: Out) -> None:
         engine.store.log(datetime.now(timezone.utc), ig_user_id, "out_mid", out.text, mid)
 
 
+async def react(ig_user_id: str, mid: str, reaction: str = "love") -> None:
+    """Heart her message (Instagram's message reaction; "love" is the reaction the API supports)."""
+    for base in graph_bases():
+        r = await http.post(f"{base}/{SEND_AS}/messages", headers={"Authorization": f"Bearer {token()}"},
+                            json={"recipient": {"id": ig_user_id}, "sender_action": "react",
+                                  "payload": {"message_id": mid, "reaction": reaction}})
+        if r.status_code < 400:
+            return
+        log.error("react via %s failed %s: %s", base, r.status_code, r.text)
+
+
 async def notify(lines: list[str]) -> None:
     for line in lines:
         log.info("TEAM: %s", line)
@@ -268,6 +279,8 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(default=""
             guest = ev["sender"]["id"]
             username, name = await fetch_profile(guest)
             res = engine.handle_message(guest, text, msg_time=ts, username=username, name=name)
+            if res.react and msg.get("mid"):
+                await react(guest, msg["mid"])
             for out in res.replies:
                 await send(guest, out)
             await notify(res.notify)
