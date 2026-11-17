@@ -57,7 +57,7 @@ def test_one_message_confirms_everything(eng):
 def test_asks_one_question_at_a_time_then_confirms(eng):
     r = chat(eng, "hiii can i get on the list tonight", THU_7PM)
     t = r.replies[0].text
-    assert t.startswith("Hi! We'd love to have you out") and "which one are you feeling?" in t
+    assert t.startswith("Hiii! I'm Thalia, Muse's assistant. We'd love to have you out") and "which one are you feeling?" in t
     assert "How many" not in t and "💕" not in t
     r = chat(eng, "noflex! me and 2 girlies", THU_7PM)     # answers two questions at once: skips ahead
     assert r.replies[0].text == "Is everyone 21+? They only take physical IDs at the door"
@@ -126,18 +126,20 @@ def test_on_the_way_then_here(eng):
     assert "coming out to grab you" in r.replies[0].text
 
 
-def test_no_show_gets_missed_you_with_reinvite(eng):
+def test_no_show_gets_no_follow_up(eng):
+    # Father's rule: no follow-ups to a girl who didn't respond. A no-show gets nothing.
     chat(eng, "noflex tonight, 3 girls no guys all 21", THU_7PM)
     sent = eng.run_jobs(now=datetime(2026, 11, 13, 13, 5, tzinfo=TZ))
     assert lead(eng)["status"] == "no_show"
-    assert "missed you" in sent[0][1].text and "tonight (NOFLEX & Nebula)" in sent[0][1].text
+    assert sent == []
+    assert lead(eng)["followup_sent"] == "skipped_no_show"
 
 
 def test_thank_you_has_reinvite(eng):
     chat(eng, "noflex tonight, 3 girls no guys all 21", THU_7PM)
     chat(eng, "we are here", datetime(2026, 11, 12, 23, 0, tzinfo=TZ))
     sent = eng.run_jobs(now=datetime(2026, 11, 13, 13, 5, tzinfo=TZ))
-    assert sent[0][1].text.startswith("Thank you for coming out") and "tomorrow (NYX Karaoke" in sent[0][1].text
+    assert sent[0][1].text.startswith("Thalia here! Thank you for coming out") and "tomorrow (NYX Karaoke" in sent[0][1].text
     assert "Thursday" not in sent[0][1].text   # only the next 3 nights, keeps it short
 
 
@@ -162,7 +164,7 @@ def test_new_night_after_last_one_starts_new_lead(eng):
     chat(eng, "we're here", datetime(2026, 11, 12, 23, 0, tzinfo=TZ))
     r = chat(eng, "can we come saturday too? same 3 girls", datetime(2026, 11, 13, 14, 0, tzinfo=TZ))
     assert lead(eng)["id"] != first
-    assert r.replies[0].text.startswith("Hi! Welcome back") and "NYX Karaoke" in r.replies[0].text
+    assert r.replies[0].text.startswith("Hiii, welcome back! Thalia here, Muse's assistant.") and "NYX Karaoke" in r.replies[0].text
 
 
 def test_weekly_ticket_links_from_muse_os_and_monday_check(eng):
@@ -208,7 +210,7 @@ def test_host_checkins_from_muse_os(eng):
     eng.apply_checkins([{"lead_id": f"DM-{b:05d}", "status": "Confirmed", "girls_arrived": None}])   # host undo
     assert lead(eng, "b")["status"] == "confirmed"
     sent = dict(eng.run_jobs(now=datetime(2026, 11, 13, 13, 5, tzinfo=TZ)))
-    assert sent["a"].text.startswith("Thank you") and "missed you" in sent["b"].text
+    assert sent["a"].text.startswith("Thalia here! Thank you") and "b" not in sent   # no-show: no message
 
 
 def test_lineup_host_from_muse_os_used_in_messages(eng):
@@ -382,7 +384,7 @@ def test_faq_always_followed_by_a_question_or_next_step(eng):
 
 def test_answers_directly_using_what_she_asked(eng):
     t = chat(eng, "Heyy, do you have any tables for Nebula this weekend", TUE_730, user="q1").replies[0].text
-    assert t.startswith("Hi! Yes, girls get in free and you get a table with drinks at Nebula!")
+    assert t.startswith("Hiii, I'm Thalia, Muse's assistant! Yes, girls get in free and you get a table with drinks at Nebula!")
     assert "We're at Nebula Thursday, Friday or Saturday, which night works for you?" in t
     t = chat(eng, "how much is it for guys at noflex", TUE_730, user="q2").replies[0].text
     assert "uys just pay cover at the door" in t and "free" not in t.lower()   # NOFLEX: cover, no tickets
@@ -469,7 +471,7 @@ def test_guestlist_closing_times_differ_by_venue(eng):
     eng.apply_list_closes({"public hotel": "20:00", "nebula": None}, {"noflex": {"2026-11-12": "22:00"}})
     thu_2030 = datetime(2026, 11, 12, 20, 30, tzinfo=TZ)
     t = chat(eng, "public hotel tonight? 3 girls all 21", thu_2030, user="l1").replies[0].text
-    assert t.startswith("Hi! We'd love to have you out. The list for Public Hotel tonight closed at 8pm.")
+    assert t.startswith("Hiii! I'm Thalia, Muse's assistant. We'd love to have you out. The list for Public Hotel tonight closed at 8pm.")
     assert "Tonight we still have NOFLEX (until 10pm)" in t
     # only venues still open are offered
     t = chat(eng, "can we come tonight?", thu_2030, user="l2").replies[0].text
