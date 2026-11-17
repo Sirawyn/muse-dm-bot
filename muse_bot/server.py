@@ -278,7 +278,14 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(default=""
                 continue
             guest = ev["sender"]["id"]
             username, name = await fetch_profile(guest)
-            res = engine.handle_message(guest, text, msg_time=ts, username=username, name=name)
+            try:
+                res = engine.handle_message(guest, text, msg_time=ts, username=username, name=name)
+            except Exception:   # never leave a guest on read because of a bug: tell the team to reply
+                log.exception("handle_message failed for %s", guest)
+                who = f"@{username}" if username else guest
+                await notify([f"⚠️ Thalia hit an error on {who}'s message and didn't reply: \"{text}\". "
+                              f"Reply to them in the Instagram app."])
+                continue
             if res.react and msg.get("mid"):
                 await react(guest, msg["mid"])
             for out in res.replies:

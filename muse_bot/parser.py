@@ -122,6 +122,7 @@ def _any(patterns, t) -> bool:
 class Parsed:
     night: date | None = None
     venue: str | None = None
+    venues: list[str] = field(default_factory=list)   # all venues she named ("nebula or marquee")
     party_size: int | None = None
     guys: int | None = None
     guys_yes_no_count: bool = False   # said "yes" there are guys but no number
@@ -196,7 +197,7 @@ def parse_night(t: str, now: datetime) -> date | None:
     d = parse_date(t, base)
     if d:
         return d
-    if re.search(r"\b(tonight|tn|tonite|today|rn|right now|tnite)\b", t):
+    if re.search(r"\b(tonight|tn|tonite|today|rn|right now|now|tnite)\b", t) and not re.search(r"\b(not|n'?t) (going out |coming )?(rn|now|right now)\b|\bfor now\b", t):
         return base
     if re.search(r"\b(tomorrow|tmrw|tmr|tomorow|tmw)\b", t):
         return base + timedelta(days=1)
@@ -215,16 +216,22 @@ def parse_night(t: str, now: datetime) -> date | None:
     return None
 
 
-def parse_venue(t: str, venues: dict) -> str | None:
+def parse_venues(t: str, venues: dict) -> list[str]:
+    """Every venue she names, longest match first ("nebula or marquee" -> both)."""
     t = " " + re.sub(r"[^a-z0-9 ]", " ", t) + " "
     squash = lambda x: re.sub(r"(.)\1+", r"\1", x)   # "nebulaa", "nooflex" -> typos of our venues
     ts = squash(t)
-    best, best_len = None, 0
+    found: dict[str, int] = {}
     for key, v in venues.items():
         for alias in v.get("aliases", []) + [v["name"].lower()]:
-            if (f" {alias} " in t or f" {squash(alias)} " in ts) and len(alias) > best_len:
-                best, best_len = key, len(alias)
-    return best
+            if f" {alias} " in t or f" {squash(alias)} " in ts:
+                found[key] = max(found.get(key, 0), len(alias))
+    return sorted(found, key=lambda k: -found[k])
+
+
+def parse_venue(t: str, venues: dict) -> str | None:
+    vs = parse_venues(t, venues)
+    return vs[0] if vs else None
 
 
 def parse_counts(text: str, expecting: str | None = None) -> tuple[int | None, int | None, bool]:
@@ -354,7 +361,8 @@ def parse(text: str, now: datetime, venues: dict, expecting: str | None = None) 
     t = normalize(text).strip()
     p = Parsed()
     p.night = parse_night(t, now)
-    p.venue = parse_venue(t, venues)
+    p.venues = parse_venues(t, venues)
+    p.venue = p.venues[0] if p.venues else None
     p.party_size, p.guys, p.guys_yes_no_count = parse_counts(text, expecting)
     p.over21 = parse_age(t, expecting)
     p.unsure_count = _any(UNSURE_COUNT, t)

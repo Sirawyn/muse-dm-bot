@@ -89,7 +89,8 @@ class Engine:
         if night == base:
             return "tonight"
         if night == base + timedelta(days=1):
-            return "tomorrow"
+            # after midnight "tomorrow" reads as the day after; name the day instead ("Saturday")
+            return WEEKDAYS[night.weekday()].capitalize() if self._local(now).date() != base else "tomorrow"
         if (night - base).days >= 7 or night < base:
             # a week or more out: "Friday" alone would read as this Friday, so name the date
             return f"{WEEKDAYS[night.weekday()].capitalize()} {night.strftime('%b')} {night.day}"
@@ -246,6 +247,10 @@ class Engine:
             d["night"] = p.night.isoformat()
         if p.venue:
             d["venue"] = p.venue
+            if len(p.venues) > 1 and d.get("night"):
+                # "nebula or marquee?": take the one that's actually running that night
+                on = self.venues_on(date.fromisoformat(d["night"]))
+                d["venue"] = next((k for k in p.venues if k in on), p.venue)
         if p.party_size:
             d["party_size"] = p.party_size
         if p.guys is not None:
@@ -336,7 +341,9 @@ class Engine:
             label = self.night_label(night, now)
             its = [n for n, keys in self.upcoming_nights(now) if d["venue"] in keys and n != night][:3]
             others = self.venues_on(night)
-            parts = [self.fmt("venue_off_night", venue=vname, night=label)]
+            hosting = any(d["venue"] in keys for _, keys in self.upcoming_nights(now))
+            parts = [self.fmt("venue_off_night" if hosting or "venue_not_hosting" not in self.msgs
+                              else "venue_not_hosting", venue=vname, night=label)]
             if its:
                 parts.append(self.fmt("venue_off_next", venue=vname,
                                       venue_nights=self.join_names([self.night_label(n, now) for n in its])))
