@@ -167,7 +167,16 @@ class Engine:
             lead = self.store.lead(self.store.new_lead(ig_user_id, c.get("username"), msg_time))
             c.update(stage="qualifying", expecting=None, lead_id=lead["id"], draft={})
 
+        pending_note = None
         paused = c.get("paused_until") and datetime.fromisoformat(c["paused_until"]) > now
+        # A person on the team sent the last message in this chat (e.g. an apology hours ago): her reply is to
+        # them, so Thalia stays out of it however long ago that was, and tells the team she wrote back.
+        last_out = self.store.db.execute(
+            "SELECT direction FROM events WHERE ig_user_id=? AND direction IN ('out','human') ORDER BY id DESC LIMIT 1",
+            (ig_user_id,)).fetchone()
+        team_owns = bool(last_out and last_out["direction"] == "human") and not paused
+        if team_owns:
+            paused = True
         if paused:
             # A double text (her 2nd message since the promoter's last one) ends the hold-off, but only when
             # the bot can actually answer it; otherwise it stays quiet and the promoter keeps the chat.
@@ -177,6 +186,8 @@ class Engine:
             if n >= 2 and self._can_answer(p, c):
                 c["paused_until"] = None
                 paused = False
+            elif team_owns:
+                pending_note = f"💬 {who} replied to the team's message: \"{text}\". Reply to them in the Instagram app."
         if paused:   # a promoter is handling this chat by hand: stay quiet, but still note what she asked for
             d = c["draft"]
             for k, val in (("night", p.night and p.night.isoformat()), ("venue", p.venue),
@@ -189,6 +200,8 @@ class Engine:
                 self.store.update_lead(lead["id"], **fields)
             self.store.dirty.add(lead["id"])
             self.store.save_convo(c)
+            if pending_note:
+                res.notify.append(pending_note)
             return res
 
         self.store.dirty.add(lead["id"])   # "last message at" changed
@@ -423,6 +436,13 @@ class Engine:
                       or bool(p.night or p.venue or p.party_size or p.guys is not None or p.over21 is not None))
         asks_for_spot = re.search(r"\b(list|guest|come|join|go out|going out|tonight|tn|tmr|tomorrow|this week|weekend|"
                                   r"spot|room|space|free|table|interested|down)\b", p.text.lower())
+        open_question = bool(re.match(r"^(what|where|how|who|why|when|which)\b", p.text) or
+                             re.search(r"[.!,]\s*(what|where|how|who|why|when|which)\b[^?]*\?", p.text))
+        if p.is_question and open_question and not faq_lines and not asks_for_spot:
+            # she asked something Thalia has no answer for (music, parking...): stay silent, a person answers.
+            # Never skip past her question to ask for the night instead.
+            self._to_human(c, lead, d, None, res, who, reason=f"question the bot can't answer: \"{p.text}\"")
+            return res
         if questions and not progressed and not faq_lines and p.is_question and not asks_for_spot:
             # a question the bot can't answer: don't dodge it with "which night?", get a person
             # Father's rule: if Thalia doesn't know how to respond, stay silent rather than say the wrong thing
