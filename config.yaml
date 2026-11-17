@@ -148,12 +148,21 @@ venues:
 
 # Answers to the questions the team gets every night (from the DM history). The bot answers these itself.
 faq:
+  # "are you a bot?" / "is this a real person?"
+  bot: "I'm Thalia, Muse's assistant! I can get you on the list, and a real person from the team jumps in for anything else!"
   free: Girls are always free, and you get a table with drinks{at_venue}!
   table: Yes, girls get in free and you get a table with drinks{at_venue}!
   guys_cost: "Guys just need to grab a ticket{cover}: {ticket_link}"
   guys_cost_nolink: "Guys can come, they just need a ticket{cover}. I'll send the link once you pick a night."
   guys_cost_free: "Guys get in free{at_venue} too, they don't need a ticket."
   guys_cost_cover: "Guys just pay {cover_amount}cover at the door, they don't need a ticket."
+  # she asks about guys before picking a venue and the venues on offer have different rules (e.g. NOFLEX is
+  # cover only, Nebula needs a ticket): the bot names each one. {details} is built from the parts below.
+  guys_cost_by_venue: "Guys can come! {details}."
+  guys_part_ticket: "at {names} they need a ticket"
+  guys_part_cover: "at {names} they just pay cover at the door, no ticket"
+  guys_part_free: "at {names} they get in free"
+  guys_part_ask: "at {names} we check with the door first"
   timing: "Try to get there {arrive_by}, the list closes at {last_entry}. Just text us when you're outside!"
   schedule: "{week}!"
   bring_friends: Ofc, bring all the girls! Everyone just needs to be 21+ with a physical ID.
@@ -166,16 +175,19 @@ faq:
 # Hearts only on the confirmation, so they don't feel automated. Hosts are first names only.
 # Placeholders: {venue} {host} {arrive_by} {dress_code} {night} {party_size} {options} {next_options} {ticket_link}
 messages:
-  greeting: "Hi! We'd love to have you out."
-  greeting_returning: "Hi! Welcome back."
+  # The bot is Thalia, Muse's assistant (named after the Muse of festivity). She introduces herself as Muse's
+  # assistant the first time she talks to someone and never pretends to be a person on the team.
+  # Father's rules: no emojis and never the word "bot" in anything a guest sees; say "assistant".
+  greeting: "Hiii! I'm Thalia, Muse's assistant. We'd love to have you out."
+  greeting_returning: "Hiii, welcome back! Thalia here, Muse's assistant."
   ask_night: What night are you thinking?
   # she named a venue but not a night: offer that venue's nights
   ask_night_for_venue: "We're at {venue} {venue_nights}, which night works for you?"
   # when the bot answers a question in its first message, it opens with this instead of the full greeting
-  greeting_short: "Hi!"
+  greeting_short: "Hiii, I'm Thalia, Muse's assistant!"
   ask_venue: "{night} we have {options}, which one are you feeling?"
   venue_reask: "{night} we're only doing {options}, which one works for you?"
-  big_group: Love a big group! Let me grab someone from the team to set it up for you
+  big_group: Love a big group! I'll get a real person from the team to set it up for you, they'll reply right here
   ask_party_size: How many of you are coming, including you?
   ask_guys: Any guys coming with you?
   ask_guys_count: How many guys?
@@ -201,16 +213,16 @@ messages:
   list_closed: "The list for {venue} {night} closed at {closes}."
   list_closed_alt: "{night} we still have {options}."
   no_venue_that_night: "We're not out {night}, but this week we're at {options}! Want to come to one of those?"
-  guys_check: Let me check with the door about the guys at {venue}, I'll get right back to you
-  age_check: Thank you for telling me! Let me check with the team and get back to you
-  handoff: Let me grab someone from the team for that, one sec
-  handoff_unsure_count: No worries! Someone from the team will check in with you once you know.
+  guys_check: Let me get a real person from the team to check with the door about the guys at {venue}, they'll get right back to you
+  age_check: Thank you for telling me! A real person from the team will check and get back to you right here
+  handoff: Let me get a real person from the team for that, they'll reply right here soon!
+  handoff_unsure_count: No worries! A real person from the team will check in with you once you know.
   decline: No worries! We'll invite you next time
   confirmation: >-
     You're all set for {venue} {night}! {dress_code}.
-    Bring a physical ID and get there {arrive_by}. Text us when you're outside and {host} will walk you in 💕
+    Bring a physical ID and get there {arrive_by}. Text us when you're outside and {host} will walk you in!
   # Used when the venue has a confirmation message on the Venues page in Muse OS; that text follows it.
-  confirmation_intro: "You're all set for {venue} {night}! 💕"
+  confirmation_intro: "You're all set for {venue} {night}!"
   # {cover} is that night's guys' cover from the Weekly setup form in Muse OS, e.g. " ($40)", or nothing if blank
   guys_ticket: "The guys just need to grab a ticket{cover}: {ticket_link}"
   guys_ticket_nolink: "The guys just need a ticket{cover}, I'll send you the link soon!"
@@ -222,11 +234,12 @@ messages:
   guys_no_table: "Just so you know, the guys can't sit at the table, but you can bring them drinks from it"
   confirmation_late: >-
     You're all set for {venue} {night}! {dress_code}.
-    Bring a physical ID and head over now, the list closes at {last_entry}. Text us when you're outside and {host} will walk you in 💕
-  late_check: Let me see if we can still get you in tonight, one sec
+    Bring a physical ID and head over now, the list closes at {last_entry}. Text us when you're outside and {host} will walk you in!
+  late_check: Let me get a real person from the team to see if we can still get you in tonight, one sec
   arrival_ack: Yay! {host} is coming out to grab you, 2 min
   otw_ack: "Yay! Text us when you're outside and {host} will come grab you"
   already_confirmed: "You're already on the list for {venue} {night}! Text us when you're outside"
   thank_you: >-
-    Thank you for coming out last night, we loved having you! This week we're at {next_options} if you want to come again
-  missed_you: "We missed you last night! This week we're at {next_options}, want me to save you a spot?"
+    Thalia here! Thank you for coming out last night, we loved having you! This week we're at {next_options} if you want to come again
+  # Not sent: Father's rule is no follow-ups to a girl who didn't respond (a no-show). Kept for reference only.
+  missed_you: "Thalia here! We missed you last night! This week we're at {next_options}, want me to save you a spot?"
