@@ -179,6 +179,15 @@ messages:
   ask_party_size: How many of you are coming, including you?
   ask_guys: Any guys coming with you?
   ask_guys_count: How many guys?
+  # She's not sure yet if guys are coming. The bot doesn't ask again: it says no worries, explains what guys
+  # need at that venue (from the team's own replies), then carries on and books the girls.
+  guys_tbd_ack: Ok no worries! Just let us know soon!
+  guys_tbd_ticket: "If there are guys, they have to grab a ticket{cover}. We don't recommend paying at the door, it's a lot more expensive. Here's the ticket link for {night}: {ticket_link}"
+  guys_tbd_ticket_nolink: "If there are guys, they have to grab a ticket{cover}. We don't recommend paying at the door, it's a lot more expensive. I'll send the link soon!"
+  guys_tbd_one_at_table: We can only fit one guy at the table since the table is just for the girls.
+  guys_tbd_check: If any guys end up coming, let us know first so we can check with the door.
+  # she was "not sure" about guys, got confirmed, then told us later
+  guys_tbd_none: Sounds good!
   ask_age: Is everyone 21+? They only take physical IDs at the door
   # a guest asks for a venue on a night we're not promoting there (all four lines join into one message)
   venue_off_night: "We're not at {venue} {night}."
