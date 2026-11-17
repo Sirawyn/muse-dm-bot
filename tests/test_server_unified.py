@@ -128,3 +128,21 @@ def test_instagram_host_token_is_renewed(monkeypatch):
     server.engine.store.set_setting("ig_token_refreshed_at", "2026-01-01T00:00:00+00:00")
     _run(server.refresh_token_if_due())
     assert server.engine.store.get_setting("ig_token") == "newtok"
+
+
+def test_thank_you_is_liked_with_a_heart():
+    bodies = []
+
+    def capture(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            bodies.append(json.loads(req.content))
+        return meta(req)
+
+    server.http = httpx.AsyncClient(transport=httpx.MockTransport(capture))
+    with TestClient(server.app) as c:
+        post(c, {"object": "instagram", "entry": [{"id": "1", "messaging": [
+            {"sender": {"id": "888"}, "recipient": {"id": "1"}, "timestamp": 1762833600000,
+             "message": {"mid": "t1", "text": "thank you!!"}}]}]})
+    reacts = [b for b in bodies if b.get("sender_action") == "react"]
+    assert reacts and reacts[0]["payload"] == {"message_id": "t1", "reaction": "love"}
+    assert reacts[0]["recipient"] == {"id": "888"}
