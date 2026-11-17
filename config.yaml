@@ -203,6 +203,8 @@ messages:
   ask_age: Is everyone 21+? They only take physical IDs at the door
   # a guest asks for a venue on a night we're not promoting there (all four lines join into one message)
   venue_off_night: "We're not at {venue} {night}."
+  # a venue on the list that Muse isn't running any night this week (e.g. Marquee before it starts again)
+  venue_not_hosting: "We're not hosting at {venue} right now."
   venue_off_next: "We'll be there {venue_nights}!"
   venue_off_alt: "{night} we have {options}."
   venue_off_week: "This week we're at {options}."
