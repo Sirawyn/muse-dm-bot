@@ -349,13 +349,14 @@ def test_yes_some_guys_asks_how_many_first(eng):
     assert eng.store.convo("g1")["draft"]["guys"] == 2
 
 
-def test_two_replies_it_cant_read_go_to_a_human(eng):
+def test_a_reply_it_cant_read_goes_to_a_human_silently(eng):
+    # Father's rule: if Thalia doesn't know how to respond, she stays silent rather than say the wrong thing.
     chat(eng, "hi", TUE_730)
     chat(eng, "friday", TUE_730)
-    r = chat(eng, "lol", TUE_730)
-    assert len(r.replies[0].text.splitlines()) == 1
-    r = chat(eng, "idk", TUE_730)
-    assert lead(eng)["status"] == "needs_human" and r.notify
+    r = chat(eng, "lol", TUE_730)            # small talk: nothing to answer, no alert, still waiting on her
+    assert r.replies == [] and lead(eng)["status"] == "qualifying"
+    r = chat(eng, "purple elephant", TUE_730)
+    assert r.replies == [] and lead(eng)["status"] == "needs_human" and r.notify
 
 
 def test_stress_test_chats(eng):
