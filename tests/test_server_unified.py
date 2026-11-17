@@ -146,3 +146,22 @@ def test_thank_you_is_liked_with_a_heart():
     reacts = [b for b in bodies if b.get("sender_action") == "react"]
     assert reacts and reacts[0]["payload"] == {"message_id": "t1", "reaction": "love"}
     assert reacts[0]["recipient"] == {"id": "888"}
+
+
+def test_engine_error_alerts_the_team_instead_of_silence(monkeypatch):
+    sent = []
+
+    async def fake_notify(lines):
+        sent.extend(lines)
+
+    def boom(*a, **k):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(server, "notify", fake_notify)
+    monkeypatch.setattr(server.engine, "handle_message", boom)
+    with TestClient(server.app) as c:
+        r = post(c, {"object": "instagram", "entry": [{"id": "1", "messaging": [
+            {"sender": {"id": "999"}, "recipient": {"id": "1"}, "timestamp": 1762833600000,
+             "message": {"mid": "e1", "text": "are u there"}}]}]})
+    assert r.status_code == 200
+    assert any("didn't reply" in s and "are u there" in s for s in sent)

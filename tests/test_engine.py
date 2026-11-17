@@ -237,8 +237,9 @@ def test_after_midnight_counts_as_friday_and_says_head_over_now(eng):
     r = chat(eng, "hii can me and 2 girls get on nebula tonight? all 21", sat_0140)
     t = r.replies[0].text
     assert "You're all set for Nebula tonight" not in t
-    # 1:40am is past Nebula's 1:30 list close: she's told, and offered Saturday
-    assert "The list for Nebula tonight closed at 1:30am." in t and "tomorrow" in t
+    # 1:40am is past Nebula's 1:30 list close: she's told, and offered Saturday (by name: after midnight
+    # "tomorrow" would read as Sunday)
+    assert "The list for Nebula tonight closed at 1:30am." in t and "Saturday" in t and "tomorrow" not in t
 
 
 def test_late_request_before_last_entry(eng):
