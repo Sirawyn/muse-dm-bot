@@ -172,9 +172,21 @@ class Engine:
         # A person on the team sent the last message in this chat (e.g. an apology hours ago): her reply is to
         # them, so Thalia stays out of it however long ago that was, and tells the team she wrote back.
         last_out = self.store.db.execute(
-            "SELECT direction FROM events WHERE ig_user_id=? AND direction IN ('out','human') ORDER BY id DESC LIMIT 1",
+            "SELECT direction FROM events WHERE ig_user_id=? AND direction IN ('out','human','resume') ORDER BY id DESC LIMIT 1",
             (ig_user_id,)).fetchone()
         team_owns = bool(last_out and last_out["direction"] == "human") and not paused
+        hold = False
+        if team_owns:
+            last_human = self.store.db.execute(
+                "SELECT text FROM events WHERE ig_user_id=? AND direction='human' ORDER BY id DESC LIMIT 1",
+                (ig_user_id,)).fetchone()
+            # The team promised to come back to her ("let me ask the manager", "I'll get back to you"), or she's
+            # already booked and the team is talking to her: Thalia never takes the chat back, even on a double
+            # text. Only the team's next message (or /resume) ends the hold.
+            hold = bool(re.search(r"\blet me (ask|check|find out|see|confirm)\b|\bi'?ll (ask|check|find out|get back|"
+                                  r"let you know|confirm)\b|\bget back to you\b|\b(one|1) sec\b|\bgive me a (sec|min)",
+                                  (last_human["text"] if last_human else "").lower())) \
+                or (lead is not None and lead.get("status") in ("confirmed", "arrived"))
         if team_owns:
             paused = True
         if paused:
@@ -183,7 +195,7 @@ class Engine:
             key = f"texts_since_human:{ig_user_id}"
             n = int(self.store.get_setting(key) or 0) + 1
             self.store.set_setting(key, str(n))
-            if n >= 2 and self._can_answer(p, c):
+            if n >= 2 and not hold and self._can_answer(p, c):
                 c["paused_until"] = None
                 paused = False
             elif team_owns:
@@ -945,6 +957,7 @@ class Engine:
         c = self.store.convo(ig_user_id)
         c["paused_until"] = None
         self.store.save_convo(c)
+        self.store.log(self._local(self.now()), ig_user_id, "resume", "team handed the chat back to Thalia")
 
     # host tools
     def check_in(self, lead_id: int, count: int | None = None, now: datetime | None = None) -> None:
