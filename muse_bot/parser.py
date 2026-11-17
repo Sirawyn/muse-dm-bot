@@ -111,6 +111,9 @@ def normalize(text: str) -> str:
     for w, n in NUMBER_WORDS.items():
         t = re.sub(rf"\b{w}\b", str(n), t)
     t = re.sub(r"\b(\d+)\s*[-–]\s*(\d+)\b(?=\s*(girls|guys|people|ppl|of us|friends))", r"\2", t)  # "3-4 girls"
+    # a bare headcount range ("5-6", "5 to 6", "5 or 6") means the bigger number, never "56"
+    t = re.sub(r"\b(\d{1,2})\s*(?:[-–~]|to|or)\s*(\d{1,2})\b",
+               lambda m: m.group(2) if 0 < int(m.group(2)) - int(m.group(1)) <= 5 else m.group(0), t)
     return re.sub(r"\s+", " ", t)
 
 
