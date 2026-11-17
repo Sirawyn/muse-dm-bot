@@ -512,14 +512,23 @@ class Engine:
                           enumerate(parts) if i]) if parts else "We'll have new nights up soon"
         last = self._clock(self.last_entry(v, (d or {}).get("night"))) if v else self._clock(str(self.cfg["brand"].get("last_entry", "00:30")))
         link = self.ticket_link(v, (d or {}).get("night")) if v else self.ticket_link({})
-        out = []
         keys = [k for k in p.faq if not (k == "table" and "free" in p.faq)]   # "free" already covers the table
         if self.guys_free((d or {}).get("venue"), (d or {}).get("night")) and "guys_cost_free" in faq:
             keys = ["guys_cost_free" if k == "guys_cost" else k for k in keys]
         elif self.policy_for((d or {}).get("venue"), (d or {}).get("night")) == "cover" and "guys_cost_cover" in faq:
             keys = ["guys_cost_cover" if k == "guys_cost" else k for k in keys]
+        if not v and "guys_cost" in keys and "guys_cost_by_venue" in faq:
+            by_venue = self._guys_by_venue((d or {}).get("night"), now_)
+            if by_venue:   # no venue picked yet and the rule differs by venue: say which is which
+                keys = [k for k in keys if k != "guys_cost"]
+                out_first = [faq["guys_cost_by_venue"].format(details=by_venue)]
+            else:
+                out_first = []
+        else:
+            out_first = []
         if not link and "guys_cost_nolink" in faq:
             keys = ["guys_cost_nolink" if k == "guys_cost" else k for k in keys]
+        out = list(out_first)
         for key in keys:
             if key in faq:
                 out.append(faq[key].format(ticket_link=link or "we'll send you the link",
@@ -530,6 +539,27 @@ class Engine:
                                            cover_amount=(c + " ") if (c := self.cover_for((d or {}).get("venue"),
                                                                     (d or {}).get("night"))) else "").strip())
         return out
+
+    def _guys_by_venue(self, night: str | None, now: datetime) -> str:
+        """"at NOFLEX they just pay cover at the door, no ticket, and at Nebula they need a ticket" for the venues
+        she could pick (that night's, else this week's). Empty when they all have the same rule."""
+        if night:
+            keys = self.venues_on(date.fromisoformat(night))
+        else:
+            keys = list(dict.fromkeys(k for _, ks in self.upcoming_nights(now) for k in ks))
+        groups: dict[str, list[str]] = {}
+        for k in keys:
+            pol = "free" if self.guys_free(k, night) else (self.policy_for(k, night, "ticket") or "ticket")
+            pol = pol if pol in ("ticket", "cover", "free") else "ask"
+            groups.setdefault(pol, []).append(self.venues[k]["name"])
+        if len(groups) < 2:
+            return ""
+        faq = self.cfg.get("faq", {})
+        names_of = lambda ns: ns[0] if len(ns) == 1 else ", ".join(ns[:-1]) + " and " + ns[-1]
+        parts = [faq[f"guys_part_{pol}"].format(names=names_of(names))
+                 for pol, names in sorted(groups.items(), key=lambda g: ["cover", "free", "ticket", "ask"].index(g[0]))]
+        text = ", and ".join(parts) if len(parts) == 2 else ", ".join(parts[:-1]) + ", and " + parts[-1]
+        return text[:1].upper() + text[1:]
 
     def _confirm(self, c, lead, d, now, res: Result, who: str, faq_lines: list[str] | None = None) -> None:
         night = date.fromisoformat(d["night"])
@@ -651,7 +681,8 @@ class Engine:
         self.store.update_lead(lead["id"], status="needs_human", notes=reason, night=d.get("night"),
                                venue=d.get("venue"), party_size=d.get("party_size"), guys=d.get("guys"))
         c.update(stage="needs_human", expecting=None)
-        res.notify.append(f"🙋 Needs a human: {who} ({reason}). Reply to them in the Instagram app.")
+        res.notify.append(f"🙋 Needs a human: {who} ({reason}). Reply to them in the Instagram app, and start "
+                          f"with your first name so she knows a real person took over from Thalia.")
 
     def _after_confirm(self, c, lead, p, text, now, who) -> Result:
         res = Result()
@@ -678,19 +709,24 @@ class Engine:
             # answer, then keep the conversation going: remind her she's already on the list
             follow = self.fmt("already_confirmed", venue=v["name"], night=self.night_label(night, now), host=v["host"])
             res.replies.append(Out("\n".join(self.faq_answers(p, {"venue": lead["venue"], "night": lead["night"]}) + [follow])))
-        elif c.get("draft", {}).get("guys_tbd") and lead["status"] == "confirmed" and p.guys is not None \
-                and not p.is_question:
-            # she was "not sure" about guys and is telling us now
+        elif lead["status"] == "confirmed" and p.guys is not None and not p.is_question \
+                and (c.get("draft", {}).get("guys_tbd") or p.guys != (lead.get("guys") or 0)):
+            # she was "not sure" about guys and is telling us now, or the number of guys changed
             c["draft"].pop("guys_tbd", None)
             c["draft"]["guys"] = p.guys
             self.store.update_lead(lead["id"], guys=p.guys)
             if p.guys == 0:
                 res.replies.append(Out(self.msgs["guys_tbd_none"]))
+                if lead.get("guys"):
+                    res.notify.append(f"🧍 {who}: no guys coming anymore ({v['name']} {night})")
             else:
                 d = {"venue": lead["venue"], "night": lead["night"]}
                 info = [l for l in self.guys_tbd_lines(d, now)[1:]]
                 res.replies.append(Out("Got it! " + " ".join(info) if info else "Got it!"))
                 res.notify.append(f"🧍 {who} is bringing {p.guys} guy{'s' if p.guys != 1 else ''} to {v['name']} {night}")
+                if self.policy_for(lead["venue"], lead["night"], "ticket") == "ticket" and not self.guys_free(
+                        lead["venue"], lead["night"]) and not self.ticket_link(self.venues[lead["venue"]], lead["night"]):
+                    res.notify.append(f"🎟️ Send {who} the guys' ticket link for {v['name']}")
         elif p.wants_human or p.is_question:
             res.replies.append(Out(self.fmt("handoff")))
             res.notify.append(f"❓ {who} (confirmed for {v['name']}) asked: \"{text}\"")
@@ -953,7 +989,11 @@ class Engine:
             if not last or now - last > timedelta(hours=23, minutes=30):
                 self.store.update_lead(lead["id"], followup_sent="skipped_outside_24h", followup_at=iso(now))
                 continue
-            key = "thank_you" if lead["status"] == "arrived" else "missed_you"
+            if lead["status"] != "arrived":
+                # No follow-ups to a girl who didn't respond: a no-show gets no "we missed you".
+                self.store.update_lead(lead["id"], followup_sent="skipped_no_show", followup_at=iso(now))
+                continue
+            key = "thank_you"
             out = Out(self.fmt(key, next_options=self._week_options(now, limit=3)))
             to_send.append((lead["ig_user_id"], out))
             self.store.update_lead(lead["id"], followup_sent=key, followup_at=iso(now))

@@ -47,6 +47,8 @@ UNSURE_COUNT = [
 ]
 # Common questions with a fixed answer (answers live in config.yaml under faq:).
 FAQ = {
+    "bot": [r"\b(are|r) (you|u) (a )?(bot|robot|ai|real|human|a real person|a person)\b", r"\b(is|am i talking to) (this|a|an)? ?(bot|robot|ai|real person|human)\b",
+            r"\bis this (a )?(real|automated|auto)", r"\b(bot|robot|automated|ai) (reply|replying|response|message)s?\b"],
     "guys_cost": [r"(cover|ticket|pay|cost|price|free|how much).{0,40}\b(guys?|boys?|men|bf|boyfriend)\b",
                   r"can (my |a |the )?(guy ?friends?|boyfriend|bf|guys?|boys?|brother|husband)( friend)? (come|join)",
                   r"(guys|boys|men) allowed", r"bring (a |my |some )?(guy|guys|boys?|boyfriend|bf)\b",
@@ -361,6 +363,9 @@ def parse(text: str, now: datetime, venues: dict, expecting: str | None = None) 
         p.unsure_guys, p.unsure_count, p.guys_yes_no_count = True, False, False
     p.wants_human = _any(HANDOFF, t) or p.unsure_count
     p.faq = [k for k, pats in FAQ.items() if _any(pats, t)]
+    if "bot" in p.faq and not _any([h for h in HANDOFF if h not in (r"real person", r"\bhuman\b")], t) \
+            and not p.unsure_count:
+        p.wants_human = False   # "is this a real person?" is a question Thalia answers, not a request for staff
     if "guys_cost" in p.faq and "free" in p.faq:
         p.faq.remove("free")
     p.declined = _any(DECLINE, t) and not p.wants_human
