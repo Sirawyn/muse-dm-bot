@@ -229,7 +229,16 @@ def parse_venues(t: str, venues: dict) -> list[str]:
         for alias in v.get("aliases", []) + [v["name"].lower()]:
             if f" {alias} " in t or f" {squash(alias)} " in ts:
                 found[key] = max(found.get(key, 0), len(alias))
-    return sorted(found, key=lambda k: -found[k])
+    ranked = sorted(found, key=lambda k: -found[k])
+    if len(ranked) > 1:
+        # "noflex instead of nebula", "not nebula", "switch from nebula to noflex": the venue she's moving
+        # away from goes last, so the one she wants wins
+        def dropped(key: str) -> bool:
+            names = "|".join(re.escape(a) for a in venues[key].get("aliases", []) + [venues[key]["name"].lower()])
+            return bool(re.search(rf"\b(instead of|rather than|not|no longer|switch(ing)? from|change from|"
+                                  rf"move from|from)\s+(the\s+)?({names})\b", t))
+        ranked = [k for k in ranked if not dropped(k)] + [k for k in ranked if dropped(k)]
+    return ranked
 
 
 def parse_venue(t: str, venues: dict) -> str | None:

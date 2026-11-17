@@ -159,13 +159,31 @@ class Engine:
                 moved_note = (f"🔁 {who} moved from {old_v} {lead['night']} to {p.night.isoformat()}; "
                               f"old booking cancelled")
             lead = None
+        carry = None
+        if lead and lead["status"] == "confirmed" and p.venue and lead.get("venue") and p.venue != lead["venue"] \
+                and (not p.night or p.night.isoformat() == lead["night"]) and lead["night"] \
+                and date.fromisoformat(lead["night"]) >= night_for(now) and not p.arrived:
+            # "can I do noflex instead of nebula?": same night, new venue. Cancel the old booking and re-book,
+            # keeping what she already told us (night, group size, guys, 21+).
+            self.store.update_lead(lead["id"], status="cancelled", notes=f"moved to {p.venue} by guest")
+            self.store.dirty.add(lead["id"])
+            old_v = self.venues.get(lead["venue"], {}).get("name", lead["venue"])
+            new_v = self.venues.get(p.venue, {}).get("name", p.venue)
+            moved_note = f"🔁 {who} moved from {old_v} to {new_v} for {lead['night']}; old booking cancelled"
+            carry = {k: v for k, v in (c.get("draft") or {}).items() if k in ("night", "party_size", "guys", "over21")}
+            carry.setdefault("night", lead["night"])
+            if lead.get("party_size"):
+                carry.setdefault("party_size", lead["party_size"])
+            if lead.get("guys") is not None:
+                carry.setdefault("guys", lead["guys"])
+            lead = None
         if not self._lead_is_live(lead, now):
             if p.pleasantry:
                 self.store.save_convo(c)
                 res.react = p.thanks   # "ty!!" after a night: a heart, no words
                 return res   # "ty!!", "sounds good" after a night or a decline: nothing to answer
             lead = self.store.lead(self.store.new_lead(ig_user_id, c.get("username"), msg_time))
-            c.update(stage="qualifying", expecting=None, lead_id=lead["id"], draft={})
+            c.update(stage="qualifying", expecting=None, lead_id=lead["id"], draft=dict(carry or {}))
 
         pending_note = None
         paused = c.get("paused_until") and datetime.fromisoformat(c["paused_until"]) > now
@@ -275,7 +293,7 @@ class Engine:
             if len(p.venues) > 1 and d.get("night"):
                 # "nebula or marquee?": take the one that's actually running that night
                 on = self.venues_on(date.fromisoformat(d["night"]))
-                d["venue"] = next((k for k in p.venues if k in on), p.venue)
+                d["venue"] = next((k for k in p.venues if k in on), p.venue)   # p.venues: wanted first
         if p.party_size:
             d["party_size"] = p.party_size
         if p.guys is not None:
