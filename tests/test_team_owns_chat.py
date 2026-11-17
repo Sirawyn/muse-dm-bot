@@ -45,3 +45,24 @@ def test_double_text_with_no_team_reply_lets_thalia_help(eng):
 def test_question_thalia_cant_answer_is_never_skipped(eng, q):
     r = chat(eng, q, datetime(2026, 11, 17, 12, 19, tzinfo=TZ))
     assert r.replies == [] and any("can't answer" in n for n in r.notify)
+
+
+def _booked_then_team_promises(eng):
+    for t in ("noflex friday", "8", "no guys, just girls", "yes"):
+        chat(eng, t, datetime(2026, 11, 17, 16, 5, tzinfo=TZ))
+    eng.handle_human_reply("g1", "Let me ask the manager for you!", now=datetime(2026, 11, 17, 16, 18, tzinfo=TZ))
+
+
+def test_thalia_never_takes_back_a_chat_the_team_promised_to_follow_up(eng):
+    # Father: "make sure not to respond to her until I get back to her"
+    _booked_then_team_promises(eng)
+    for t in ("ok thank you!", "also what time should we get there friday?", "is the list still good?"):
+        r = chat(eng, t, datetime(2026, 11, 17, 17, 0, tzinfo=TZ))
+        assert r.replies == [] and r.notify
+
+
+def test_team_reply_or_resume_ends_the_hold(eng):
+    _booked_then_team_promises(eng)
+    eng.resume_bot("g1")
+    r = chat(eng, "what time should we get there friday?", datetime(2026, 11, 17, 17, 0, tzinfo=TZ))
+    assert r.replies
