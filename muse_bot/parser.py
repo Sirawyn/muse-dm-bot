@@ -102,8 +102,33 @@ def night_for(now: datetime) -> date:
     return (now - timedelta(hours=5)).date()
 
 
+# Texting shorthand guests actually use, mined from the Muse DM history (3,463 guest messages, Oct 2026).
+# Expanded before anything else is read, so "abt 5 of us tmrw" reads like "about 5 of us tomorrow".
+# Words the rules already know in short form (ty, tysm, thx, kk, omw, otw, tn, rn, idk) are left alone.
+SLANG = {
+    "abt": "about", "bout": "about", "lyk": "like", "lk": "like", "u": "you", "r": "are", "ur": "your",
+    "ppl": "people", "bc": "because", "bcs": "because", "cuz": "because", "cus": "because", "coz": "because",
+    "pls": "please", "plz": "please", "lmk": "let me know", "js": "just", "jus": "just", "alr": "alright",
+    "idt": "i don't think", "yk": "you know", "imma": "i'm going to", "lemme": "let me", "gna": "going to",
+    "gonna": "going to", "wanna": "want to", "tryna": "trying to", "tix": "tickets", "tkts": "tickets",
+    "wknd": "weekend", "wkend": "weekend", "shld": "should", "wld": "would", "cld": "could", "rly": "really",
+    "rlly": "really", "hv": "have", "nw": "no worries", "tgt": "together", "smth": "something",
+    "smt": "something", "gc": "group chat", "yall": "you all", "y'all": "you all", "nvm": "never mind",
+    "prob": "probably", "prolly": "probably", "def": "definitely", "deff": "definitely", "sm": "so much",
+    "tnit": "tonight", "2nite": "tonight", "2night": "tonight", "tmrow": "tomorrow", "tomo": "tomorrow",
+    "2morrow": "tomorrow", "b4": "before", "l8r": "later", "l8": "late", "thru": "through", "tho": "though",
+    "w/o": "without", "bday": "birthday", "bdays": "birthdays", "gf": "girlfriend", "gfs": "girlfriends",
+    "ig": "instagram", "msg": "message", "abt.": "about", "wya": "where are you",
+    "hbu": "how about you", "wbu": "what about you", "ofc": "of course", "obv": "obviously", "ngl": "not gonna lie",
+    "fs": "for sure", "asap": "as soon as possible", "aight": "alright", "ight": "alright",
+}
+_SLANG_RE = re.compile(r"(?<![\w'/])(" + "|".join(re.escape(k) for k in sorted(SLANG, key=len, reverse=True))
+                       + r")(?![\w'/])")
+
+
 def normalize(text: str) -> str:
     t = text.lower().replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    t = _SLANG_RE.sub(lambda m: SLANG[m.group(1)], t)
     t = t.replace("+", " plus ").replace("&", " and ")
     t = re.sub(r"\b(w/|w)\s", "with ", t)
     t = re.sub(r"\s(n)\s", " and ", t)
@@ -395,6 +420,10 @@ def parse(text: str, now: datetime, venues: dict, expecting: str | None = None) 
     p.thanks = bool(re.search(r"\b(thank(s|x|u|ss+)?|thnx|thx|ty+|tysm+|tyvm|appreciate (it|you|u|that))\b", t))
     p.pleasantry = (len(t) < 70 and "?" not in t and not (p.night or p.venue or p.party_size) and bool(re.match(
         r"^\W*(ok+|okay|oki+|kk|ty+|thank|tysm|thx|sounds good|sg+|bet|perfect|yay+|amazing|love (it|that|you)|"
-        r"will do|no worries|np|got it|gotcha|noted|cute|omg|haha|lol|\W*$)", t)))
+        r"will do|no worries|np|got it|gotcha|noted|cute|omg|haha|lol|\W*$)", t))
+        # "I see thank you!", "oh ok thanks so much": a thank-you with nothing to act on is not a new request
+        or (p.thanks and len(t) < 70 and "?" not in t and not (p.night or p.venue or p.party_size)
+            and p.guys is None and p.over21 is None and not p.faq and not p.wants_human and not p.declined
+            and not p.arrived))
     p.is_question = "?" in t or bool(re.match(r"^(is|are|do|does|can|will|what|where|when|how|who)\b", t))
     return p

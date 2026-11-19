@@ -267,15 +267,17 @@ async def webhook(request: Request, x_hub_signature_256: str = Header(default=""
         for ev in events:
             msg = ev.get("message") or {}
             text = msg.get("text")
+            if msg.get("is_echo") and not msg.get("is_deleted"):
+                # Sent from the Muse account. The bot only ever sends text, so a shared post, photo, voice note
+                # or a text the bot didn't send means a person on the team is talking: Thalia steps back.
+                guest = (ev.get("recipient") or {}).get("id")
+                if guest and (not text or not is_bot_echo(guest, text, msg.get("mid"))):
+                    engine.handle_human_reply(guest, text or "[shared a post or attachment]")
+                continue
             if not text or msg.get("is_deleted"):
                 continue  # stickers, reactions, story replies without text: leave for humans
             raw_ts = int(ev.get("timestamp") or 0)
             ts = datetime.fromtimestamp(raw_ts / 1000 if raw_ts > 10**11 else raw_ts, timezone.utc)
-            if msg.get("is_echo"):
-                guest = ev["recipient"]["id"]
-                if not is_bot_echo(guest, text, msg.get("mid")):
-                    engine.handle_human_reply(guest, text)   # promoter typed by hand: bot steps back
-                continue
             guest = ev["sender"]["id"]
             username, name = await fetch_profile(guest)
             try:
