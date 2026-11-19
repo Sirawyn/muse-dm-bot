@@ -66,3 +66,10 @@ def test_team_reply_or_resume_ends_the_hold(eng):
     eng.resume_bot("g1")
     r = chat(eng, "what time should we get there friday?", datetime(2026, 11, 17, 17, 0, tzinfo=TZ))
     assert r.replies
+
+
+@pytest.mark.parametrize("text", ["I see thank you!", "oh ok thanks so much", "got it thank u", "Thank you!"])
+def test_thank_you_alone_never_starts_a_new_chat(eng, text):
+    # Allison, Nov 18: "I see thank you!" got "Hiii! I'm Thalia..." as if she were new
+    r = chat(eng, text, datetime(2026, 11, 18, 11, 56, tzinfo=TZ))
+    assert r.replies == [] and r.react

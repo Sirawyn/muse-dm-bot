@@ -165,3 +165,16 @@ def test_engine_error_alerts_the_team_instead_of_silence(monkeypatch):
              "message": {"mid": "e1", "text": "are u there"}}]}]})
     assert r.status_code == 200
     assert any("didn't reply" in s and "are u there" in s for s in sent)
+
+
+def test_team_sharing_a_post_counts_as_the_team_talking():
+    with TestClient(server.app) as c:
+        post(c, {"object": "instagram", "entry": [{"id": "1", "messaging": [
+            {"sender": {"id": "1"}, "recipient": {"id": "4242"}, "timestamp": 1762833600000,
+             "message": {"mid": "s1", "is_echo": True, "attachments": [{"type": "share", "payload": {"url": "x"}}]}}]}]})
+        calls.clear()
+        post(c, {"object": "instagram", "entry": [{"id": "1", "messaging": [
+            {"sender": {"id": "4242"}, "recipient": {"id": "1"}, "timestamp": 1762833700000,
+             "message": {"mid": "s2", "text": "can 3 of us come friday"}}]}]})
+    sends = [p for m, h, p in calls if m == "POST" and p.endswith("/messages")]
+    assert sends == []   # the team is handling this chat, Thalia stays out
