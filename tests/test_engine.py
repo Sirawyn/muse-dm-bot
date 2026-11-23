@@ -537,16 +537,19 @@ def test_takeover_is_ten_minutes_and_restarts(eng):
     eng.handle_human_reply("g1", "hey babe! which night?", now=THU_7PM)
     eng.handle_human_reply("g1", "we have noflex tonight", now=THU_7PM + td(minutes=8))
     assert chat(eng, "ok", THU_7PM + td(minutes=15)).replies == []            # restarted at 7:08
-    assert chat(eng, "tonight, 3 of us", THU_7PM + td(minutes=30)).replies  # past 10 minutes: bot is back
+    # Father, Nov 23: once the team has written, Thalia never takes the chat back on her own
+    assert chat(eng, "tonight, 3 of us", THU_7PM + td(minutes=30)).replies == []
+    eng.resume_bot("g1")                                                          # the team hands it back
+    assert chat(eng, "tonight, 3 of us", THU_7PM + td(minutes=31)).replies
 
 
-def test_double_text_ends_takeover_when_bot_can_answer(eng):
+def test_double_text_no_longer_ends_takeover(eng):
     from datetime import timedelta as td
     chat(eng, "hey", THU_7PM)
     eng.handle_human_reply("g1", "hey! which night?", now=THU_7PM)
     assert chat(eng, "hmm let me think", THU_7PM + td(minutes=1)).replies == []
     r = chat(eng, "noflex tonight, 3 girls all 21", THU_7PM + td(minutes=2))
-    assert r.replies, "double text the bot understands: it answers"
+    assert r.replies == [] and r.notify, "the team owns the chat: alert, no reply"
 
 
 def test_double_text_bot_cant_answer_stays_with_promoter(eng):

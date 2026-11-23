@@ -31,12 +31,14 @@ def test_reply_to_a_team_message_hours_later_goes_to_the_team(eng):
     assert any("replied to the team" in n for n in r.notify)
 
 
-def test_double_text_with_no_team_reply_lets_thalia_help(eng):
-    chat(eng, "hi", datetime(2026, 11, 13, 17, 14, tzinfo=TZ))
-    eng.handle_human_reply("g1", "we're at NOFLEX friday if you want to come", now=datetime(2026, 11, 17, 0, 53, tzinfo=TZ))
-    assert chat(eng, "yes!", datetime(2026, 11, 17, 12, 19, tzinfo=TZ)).replies == []
-    r = chat(eng, "friday, 8 of us", datetime(2026, 11, 17, 15, 0, tzinfo=TZ))   # nobody answered: Thalia helps
-    assert r.replies
+def test_double_text_after_the_team_still_goes_to_the_team(eng):
+    # Sharon, Nov 23: Devin said "We will be at nebula this Wednesday", she wrote "No worries" then
+    # "I have five girls including myself", and Thalia jumped in with "what night?"
+    chat(eng, "Hi where will yall be on Wednesday night??", datetime(2026, 11, 23, 17, 31, tzinfo=TZ))
+    eng.handle_human_reply("g1", "We will be at nebula this Wednesday", now=datetime(2026, 11, 23, 18, 0, tzinfo=TZ))
+    assert chat(eng, "No worries", datetime(2026, 11, 23, 18, 5, tzinfo=TZ)).replies == []
+    r = chat(eng, "I have five girls including myself", datetime(2026, 11, 23, 18, 6, tzinfo=TZ))
+    assert r.replies == [] and r.notify
 
 
 @pytest.mark.parametrize("q", ["What type of music is normally played at NOFLEX?",
@@ -73,3 +75,34 @@ def test_thank_you_alone_never_starts_a_new_chat(eng, text):
     # Allison, Nov 18: "I see thank you!" got "Hiii! I'm Thalia..." as if she were new
     r = chat(eng, text, datetime(2026, 11, 18, 11, 56, tzinfo=TZ))
     assert r.replies == [] and r.react
+
+
+def test_team_hold_ends_after_three_days(eng):
+    chat(eng, "hi", datetime(2026, 11, 23, 17, 31, tzinfo=TZ))
+    eng.handle_human_reply("g1", "We will be at nebula this Wednesday", now=datetime(2026, 11, 23, 18, 0, tzinfo=TZ))
+    r = chat(eng, "hii can 4 of us come to nebula saturday", datetime(2026, 11, 27, 12, 0, tzinfo=TZ))
+    assert r.replies   # four days later, a new request: Thalia helps again
+
+
+INVITE = "Hi Rose! We are promoting for Nebula this Friday and Saturday, tables and bottles included! Would be " \
+         "awesome to take you and your friends out, let us know if you are down!"
+
+
+def test_reply_to_a_mass_invite_goes_to_thalia(eng):
+    # Father, Nov 23: replies to the team's invites still go to Thalia
+    eng.handle_human_reply("g1", INVITE, now=datetime(2026, 11, 23, 3, 57, tzinfo=TZ))
+    r = chat(eng, "hii can i get a table at nebula for friday", datetime(2026, 11, 23, 12, 18, tzinfo=TZ))
+    assert r.replies
+
+
+def test_personal_message_is_not_an_invite(eng):
+    chat(eng, "hi", datetime(2026, 11, 13, 17, 14, tzinfo=TZ))
+    eng.handle_human_reply("g1", "Hi Allison, we are deeply sorry... We are hosting this Friday at NOFLEX",
+                           now=datetime(2026, 11, 17, 0, 53, tzinfo=TZ))
+    assert chat(eng, "still interested!", datetime(2026, 11, 17, 12, 19, tzinfo=TZ)).replies == []
+
+
+def test_invite_style_message_in_a_live_chat_is_the_team(eng):
+    chat(eng, "where will yall be wednesday?", datetime(2026, 11, 23, 17, 31, tzinfo=TZ))
+    eng.handle_human_reply("g1", "We are hosting at nebula this Wednesday!", now=datetime(2026, 11, 23, 18, 0, tzinfo=TZ))
+    assert chat(eng, "5 girls", datetime(2026, 11, 23, 18, 5, tzinfo=TZ)).replies == []
