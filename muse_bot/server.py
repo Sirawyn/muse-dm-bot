@@ -136,6 +136,7 @@ app = FastAPI(title="Muse DM bot")
 http = httpx.AsyncClient(timeout=10)
 # Muse OS web app is the system of record. Without MUSE_OS_URL the bot still replies; leads stay in its local db.
 museos = MuseOSSync.from_env(engine.tz) if os.getenv("MUSE_OS_URL", "").startswith("http") else None
+engine.require_lineup = museos is not None   # with Muse OS connected, no lineup this week = Thalia stays quiet
 
 
 def _sync_now() -> None:

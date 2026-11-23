@@ -194,8 +194,41 @@ def _upcoming(base: date, month: int, day: int) -> date | None:
     return None
 
 
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    d = date(year, month, 1)
+    d += timedelta(days=(weekday - d.weekday()) % 7)
+    return d + timedelta(weeks=n - 1)
+
+
+def _holidays(year: int) -> dict[str, date]:
+    thanksgiving = _nth_weekday(year, 11, 3, 4)                       # 4th Thursday of November
+    return {
+        "thanksgiving eve": thanksgiving - timedelta(days=1), "thanksgiving": thanksgiving,
+        "friendsgiving": thanksgiving - timedelta(days=1), "black friday": thanksgiving + timedelta(days=1),
+        "christmas eve": date(year, 12, 24), "xmas eve": date(year, 12, 24),
+        "christmas": date(year, 12, 25), "xmas": date(year, 12, 25),
+        "new year'?s eve": date(year, 12, 31), "new years eve": date(year, 12, 31), "nye": date(year, 12, 31),
+        "new year'?s day": date(year, 1, 1), "halloween": date(year, 10, 31),
+        "valentine'?s( day)?": date(year, 2, 14), "galentine'?s( day)?": date(year, 2, 13),
+        "st\\.? patrick'?s( day)?|st\\.? patty'?s( day)?|saint patrick'?s( day)?": date(year, 3, 17),
+        "cinco de mayo": date(year, 5, 5), "(4th|fourth) of july|july (4th|fourth)": date(year, 7, 4),
+    }
+
+
+def parse_holiday(t: str, base: date) -> date | None:
+    """Holidays guests use instead of dates: "thanksgiving eve", "nye", "halloween"..."""
+    for year in (base.year, base.year + 1):
+        for pattern, d in sorted(_holidays(year).items(), key=lambda kv: -len(kv[0])):   # "thanksgiving eve" first
+            if re.search(rf"\b(?:{pattern})\b", t) and d >= base:
+                return d
+    return None
+
+
 def parse_date(t: str, base: date) -> date | None:
-    """Calendar dates: "nov 20th", "november 20", "20th of november", "11/20", "the 21st"."""
+    """Calendar dates: "nov 20th", "november 20", "20th of november", "11/20", "the 21st", and holidays."""
+    h = parse_holiday(t, base)
+    if h:
+        return h
     m = re.search(rf"\b({_MONTH})\.?\s*(\d{{1,2}}){_ORD}?\b", t)
     if m and not (m.group(1) == "may" and not re.search(rf"\bmay\.?\s*\d{{1,2}}{_ORD}?\b(?!\s*(of us|girls|people|ppl))", t)):
         return _upcoming(base, MONTHS[m.group(1)], int(m.group(2)))

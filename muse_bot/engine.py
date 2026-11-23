@@ -62,6 +62,9 @@ class Engine:
         self.night_links: dict[str, dict[str, str]] = {}    # venue key -> {night: guys' ticket link} from Muse OS
         self.night_closes: dict[str, dict[str, str]] = {}   # venue key -> {night: guestlist closing "HH:MM"}
         self.lineup_dates: set[str] = set()
+        # Set by the server when Muse OS is connected. Father's rule: until this week's lineup is uploaded to
+        # Muse OS, Thalia doesn't answer new requests at all (the weekly config schedule is only a fallback).
+        self.require_lineup = False
 
     # helpers
     def now(self) -> datetime:
@@ -69,6 +72,17 @@ class Engine:
 
     def _local(self, dt: datetime) -> datetime:
         return dt.astimezone(self.tz) if dt.tzinfo else dt.replace(tzinfo=self.tz)
+
+    def schedule_ready(self, now: datetime, night: date | None = None) -> bool:
+        """Is this week's lineup (and the night she asked about) uploaded to Muse OS yet?"""
+        if not self.require_lineup:
+            return True
+        base = night_for(self._local(now))
+        start = base - timedelta(days=base.weekday())                  # Monday of this week
+        week = {(start + timedelta(days=i)).isoformat() for i in range(7)}
+        if not (self.lineup_dates & week):
+            return False
+        return not night or night.isoformat() <= max(self.lineup_dates)
 
     def venues_on(self, night: date) -> list[str]:
         """The dated lineup from Muse OS wins for the nights it covers (the next 14); after that, or without
@@ -243,6 +257,15 @@ class Engine:
                 lead["referred_by"] = scout
                 scout_note = f"🤝 {who} was referred by scout {scout}"
         status = lead["status"]
+        if status not in ("confirmed", "arrived", "needs_human") and not self.schedule_ready(now, p.night):
+            # This week's lineup isn't in Muse OS yet: say nothing rather than guess the week's venues.
+            key = f"no_lineup_alert:{ig_user_id}:{night_for(now).isoformat()}"
+            if not self.store.get_setting(key):
+                self.store.set_setting(key, "1")
+                res.notify.append(f"🗓️ {who} asked about going out, but this week's schedule isn't in Muse OS yet, "
+                                  f"so Thalia didn't reply: \"{text}\". Upload the week's lineup or reply by hand.")
+            self.store.save_convo(c)
+            return res
         if status in ("confirmed", "arrived"):
             res = self._after_confirm(c, lead, p, text, now, who)
         elif status == "needs_human":
@@ -284,6 +307,7 @@ class Engine:
     def _qualify(self, c: dict, lead: dict, p, now: datetime, who: str) -> Result:
         res = Result()
         d = c["draft"]
+        asked_known = bool(p.faq)   # she asked something Thalia has an answer for (before any FAQ is trimmed)
         first_touch = not lead.get("first_reply_at")
         before = {k: val for k, val in d.items() if k != "stalls"}
         if p.night:
@@ -464,11 +488,15 @@ class Engine:
             quick = ["No guys, just girls", "Yes, some guys"] if expecting == "guys" else []
         progressed = ({k: val for k, val in d.items() if k != "stalls"} != before
                       or bool(p.night or p.venue or p.party_size or p.guys is not None or p.over21 is not None))
-        asks_for_spot = re.search(r"\b(list|guest|come|join|go out|going out|tonight|tn|tmr|tomorrow|this week|weekend|"
+        asks_for_spot = re.search(r"\b(what|how) about\b|\bwhat'?s (on|happening|going on)\b|"
+                                  r"\bhow'?s it looking\b|\bhow (does|do) (it|things) look\b|\bany (room|space|spots?)\b|"
+                                  r"\bwhere (will|are|r) (you|u)\b|"
+                                  r"\b(list|guest|come|join|go out|going out|tonight|tn|tmr|tomorrow|this week|weekend|"
                                   r"spot|room|space|free|table|interested|down)\b", p.text.lower())
         open_question = bool(re.match(r"^(what|where|how|who|why|when|which)\b", p.text) or
                              re.search(r"[.!,]\s*(what|where|how|who|why|when|which)\b[^?]*\?", p.text))
-        if p.is_question and open_question and not faq_lines and not asks_for_spot:
+        if p.is_question and open_question and not faq_lines and not asked_known and not asks_for_spot \
+                and not (p.party_size or p.guys is not None):   # "how many can come? 3 girls 1 guy" is a booking
             # she asked something Thalia has no answer for (music, parking...): stay silent, a person answers.
             # Never skip past her question to ask for the night instead.
             self._to_human(c, lead, d, None, res, who, reason=f"question the bot can't answer: \"{p.text}\"")
@@ -950,6 +978,9 @@ class Engine:
                 if not self.ticket_link(self.venues[k], n.isoformat()) and label not in missing:
                     missing.append(label)
         out = []
+        if not self.schedule_ready(now):
+            out.append("🗓️ This week's schedule isn't in Muse OS yet. Thalia won't answer new requests until "
+                       "the week's lineup is uploaded.")
         if missing:
             out.append(f"🎟️ No guys' ticket link yet this week for {', '.join(missing)}. "
                        f"Add them on the Weekly setup form in Muse OS.")
