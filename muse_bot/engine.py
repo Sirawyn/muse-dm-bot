@@ -204,9 +204,14 @@ class Engine:
         # A person on the team sent the last message in this chat (e.g. an apology hours ago): her reply is to
         # them, so Thalia stays out of it however long ago that was, and tells the team she wrote back.
         last_out = self.store.db.execute(
-            "SELECT direction FROM events WHERE ig_user_id=? AND direction IN ('out','human','resume') ORDER BY id DESC LIMIT 1",
-            (ig_user_id,)).fetchone()
-        team_owns = bool(last_out and last_out["direction"] == "human") and not paused
+            "SELECT direction, at FROM events WHERE ig_user_id=? AND direction IN ('out','human','resume') "
+            "ORDER BY id DESC LIMIT 1", (ig_user_id,)).fetchone()
+        # The team keeps a chat they wrote in for `team_hold_hours` (default 3 days) after their last message;
+        # after that a brand-new request from her goes to Thalia again.
+        hold_h = float(self.cfg["brand"].get("team_hold_hours", 72))
+        team_spoke_last = bool(last_out and last_out["direction"] == "human"
+                               and now - self._local(datetime.fromisoformat(last_out["at"])) < timedelta(hours=hold_h))
+        team_owns = team_spoke_last and not paused
         hold = False
         if team_owns:
             last_human = self.store.db.execute(
@@ -222,16 +227,15 @@ class Engine:
         if team_owns:
             paused = True
         if paused:
-            # A double text (her 2nd message since the promoter's last one) ends the hold-off, but only when
-            # the bot can actually answer it; otherwise it stays quiet and the promoter keeps the chat.
+            # Once a person on the team has written in this chat, Thalia never takes it back on her own, not
+            # even when the guest texts twice (Father, Nov 23: Sharon got "what night?" right after Devin told her
+            # Nebula Wednesday). Only the team's resume link hands the chat back.
             key = f"texts_since_human:{ig_user_id}"
             n = int(self.store.get_setting(key) or 0) + 1
             self.store.set_setting(key, str(n))
-            if n >= 2 and not hold and self._can_answer(p, c):
-                c["paused_until"] = None
-                paused = False
-            elif team_owns:
-                pending_note = f"💬 {who} replied to the team's message: \"{text}\". Reply to them in the Instagram app."
+            if team_spoke_last:
+                pending_note = (f"💬 {who} replied to the team's message: \"{text}\". Reply to them in the Instagram app."
+                                if n == 1 else f"💬 {who} wrote again: \"{text}\"")
         if paused:   # a promoter is handling this chat by hand: stay quiet, but still note what she asked for
             d = c["draft"]
             for k, val in (("night", p.night and p.night.isoformat()), ("venue", p.venue),
@@ -832,9 +836,31 @@ class Engine:
         return not (not p.venue and self.other_venue(p.text, c.get("expecting")))
 
     # human promoter typed in the Instagram app
+    INVITE = re.compile(r"\bhey girl|\b(we'?re|we are) (promoting|hosting|throwing|doing)\b|"
+                        r"would (be awesome|love) to (take|have) you|let us know if you'?re down|"
+                        r"tables? and bottles included|\bwanna come out\b|\bwant to come out\b")
+    PERSONAL = re.compile(r"\bsorry\b|apolog|\bthis is \w+|taking over|\bmy bad\b")
+
+    def is_invite(self, ig_user_id: str, text: str, now: datetime) -> bool:
+        """A team message that starts a conversation (no message from her in the last 24h) and reads like the
+        weekly invite. A reply in a live chat, or anything personal ("sorry", "this is Devin"), is the team
+        taking over, never an invite."""
+        t = (text or "").lower()
+        if not self.INVITE.search(t) or self.PERSONAL.search(t):
+            return False
+        last_in = self.store.db.execute(
+            "SELECT at FROM events WHERE ig_user_id=? AND direction='in' ORDER BY id DESC LIMIT 1",
+            (ig_user_id,)).fetchone()
+        return not last_in or now - self._local(datetime.fromisoformat(last_in["at"])) > timedelta(hours=24)
+
     def handle_human_reply(self, ig_user_id: str, text: str, now: datetime | None = None) -> None:
         """Hold the bot off this chat for human_takeover_minutes, restarting on every message the promoter sends."""
         now = self._local(now or self.now())
+        if self.is_invite(ig_user_id, text, now):
+            # A mass invite ("Hey girl! We're promoting Nebula this Friday...") is not the team taking over:
+            # her reply goes to Thalia (Father, Nov 23).
+            self.store.log(now, ig_user_id, "invite", text)
+            return
         c = self.store.convo(ig_user_id)
         mins = self.cfg["brand"].get("human_takeover_minutes")
         if mins is None:
