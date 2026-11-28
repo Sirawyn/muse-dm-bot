@@ -19,7 +19,9 @@ WEEKDAY_ALIASES = {
 }
 GIRLS = r"(?:girls|girlies|ladies|gals|women|girl ?friends|baddies)"
 GUYS = r"(?:guys?|boys?|men|males?|dudes?|gentlemen|guy ?friends?)"
-YES = re.compile(r"^\W*(yes+|yeah|yea|yep|ya+|yup|yess+|ye+s|of course|ofc|yesss)\b")
+YES = re.compile(r"^\W*((yes+)+|ye+s+|yeah+|yea+|yep+|ya+|yup+|of course|ofc|definitely|for sure|"
+                 r"(we|they) (all )?(do|are|have)\b|all of us( do)?\b|everyone (does|is|has)\b|"
+                 r"all good\b|absolutely|totally|yesyes)")
 NO = re.compile(r"^\W*(no+|nope|nah|n)\b")
 
 # Things the bot must NOT answer itself.
@@ -27,7 +29,8 @@ HANDOFF = [
     r"birthday", r"\bb-?day", r"bachelorette", r"bachelor\b", r"discount", r"\bdeal\b", r"special(s)?\b",
     r"\brude\b", r"attitude", r"complain", r"refund", r"manager", r"real person", r"\bhuman\b",
     r"hiring", r"\bjob\b", r"work (for|with) (you|muse)", r"be a promoter", r"promoter position",
-    r"buy (a |the )?(table|bottle)", r"bottle service", r"(get|book|reserve) a table for (my|our|a) ",
+    r"buy (a |the )?(table|bottle)", r"bottle service",
+    r"\bbottles?\s*(/|and|or|&)?\s*(tables?\s*)?services?\b", r"\btable services?\b", r"\bbottle (menu|prices?|minimum)", r"(get|book|reserve) a table for (my|our|a) ",
     r"\bminimum\b", r"\bvip section\b", r"collab", r"partnership", r"sponsor",
     # signs for the table (birthday/bottle signs, sparklers): the team sets these up
     r"\bsigns?\b(?! up)", r"sparkler", r"\bbanner\b", r"\bneon\b",
@@ -225,10 +228,7 @@ def parse_holiday(t: str, base: date) -> date | None:
 
 
 def parse_date(t: str, base: date) -> date | None:
-    """Calendar dates: "nov 20th", "november 20", "20th of november", "11/20", "the 21st", and holidays."""
-    h = parse_holiday(t, base)
-    if h:
-        return h
+    """Calendar dates: "nov 20th", "november 20", "20th of november", "11/20", "the 21st"."""
     m = re.search(rf"\b({_MONTH})\.?\s*(\d{{1,2}}){_ORD}?\b", t)
     if m and not (m.group(1) == "may" and not re.search(rf"\bmay\.?\s*\d{{1,2}}{_ORD}?\b(?!\s*(of us|girls|people|ppl))", t)):
         return _upcoming(base, MONTHS[m.group(1)], int(m.group(2)))
@@ -274,7 +274,9 @@ def parse_night(t: str, now: datetime) -> date | None:
             next_monday = base + timedelta(days=7 - base.weekday())
             return next_monday + timedelta(days=idx)
         return base + timedelta(days=(idx - base.weekday()) % 7)
-    return None
+    # A holiday only names the night when nothing else does: "hope you had an amazing Thanksgiving! ...
+    # tomorrow night (11/27)" means the 27th, not Thanksgiving.
+    return parse_holiday(t, base)
 
 
 def parse_venues(t: str, venues: dict) -> list[str]:
@@ -348,9 +350,12 @@ def parse_counts(text: str, expecting: str | None = None) -> tuple[int | None, i
                                     r"|\bmy plus (1|one)\b", t):
         others = 1
     # explicit totals
-    for pat in (r"\b(\d+) of us\b", r"\b(\d+) (?:\w+ )?total\b", r"\b(?:party|group|table) (?:of|for) (\d+)\b",
+    # "a group of 3 girls and 1 guy" is 3 girls + 1 guy, not a group of 3: a number followed by girls/guys
+    # is a split, never the total
+    split = rf"(?!\s+(?:\w+\s+)?(?:{GIRLS}|{GUYS}|girl)\b)"
+    for pat in (r"\b(\d+) of us\b", r"\b(\d+) (?:\w+ )?total\b", rf"\b(?:party|group|table) (?:of|for) (\d+)\b{split}",
                 r"\b(\d+) (?:people|ppl)\b", r"\b(\d+) in (?:my|our|the) (?:group|grp|party|crew|squad)\b",
-                r"\b(?:group|grp) (?:of|is) (\d+)\b", r"\b(?:we|i) (?:have|hv|got|are) (\d+)\b"):
+                rf"\b(?:group|grp) (?:of|is) (\d+)\b{split}", rf"\b(?:we|i) (?:have|hv|got|are) (\d+)\b{split}"):
         n = take(pat)
         if n is not None and total is None:
             total = n
