@@ -244,6 +244,7 @@ messages:
   arrival_ack: Yay! {host} is coming out to grab you, 2 min
   otw_ack: "Yay! Text us when you're outside and {host} will come grab you"
   already_confirmed: "You're already on the list for {venue} {night}! Text us when you're outside"
+  already_confirmed_short: "You're already on the list for {venue} {night}!"
   thank_you: >-
     Thalia here! Thank you for coming out last night, we loved having you! This week we're at {next_options} if you want to come again
   # Not sent: Father's rule is no follow-ups to a girl who didn't respond (a no-show). Kept for reference only.
