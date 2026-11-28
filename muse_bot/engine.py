@@ -797,8 +797,12 @@ class Engine:
             res.notify.append(f"❌ {who} cancelled for {v['name']} {night}")
         elif p.faq and not p.wants_human:
             # answer, then keep the conversation going: remind her she's already on the list
-            follow = self.fmt("already_confirmed", venue=v["name"], night=self.night_label(night, now), host=v["host"])
-            res.replies.append(Out("\n".join(self.faq_answers(p, {"venue": lead["venue"], "night": lead["night"]}) + [follow])))
+            answers = self.faq_answers(p, {"venue": lead["venue"], "night": lead["night"]}, now)
+            # don't say "text us when you're outside" twice in one message
+            key = "already_confirmed_short" if any("outside" in a for a in answers) and \
+                "already_confirmed_short" in self.msgs else "already_confirmed"
+            follow = self.fmt(key, venue=v["name"], night=self.night_label(night, now), host=v["host"])
+            res.replies.append(Out("\n".join(answers + [follow])))
         elif lead["status"] == "confirmed" and p.guys is not None and not p.is_question \
                 and (c.get("draft", {}).get("guys_tbd") or p.guys != (lead.get("guys") or 0)):
             # she was "not sure" about guys and is telling us now, or the number of guys changed
